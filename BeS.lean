@@ -211,6 +211,218 @@ theorem soundness {Γ : List Form} {φ : Form} (d : NJ Γ φ) : valid Γ φ := b
   | @botE Γ φ _ ih =>
     intro B hΓ; exact bot_elim φ (ih B hΓ)
 
+/-! ## Bases compuestas -/
+
+abbrev bunion (B C : Base) : Base := fun r => B r ∨ C r
+
+-- átomos como hechos
+abbrev facts (T : List Atom) : Base := fun r => r.prems = [] ∧ r.concl ∈ T
+
+abbrev ofList (L : List Rule) : Base := fun r => r ∈ L
+
+-- hechos → contexto
+theorem Deriv.facts_to_ctx {B : Base} {T : List Atom} {Γ : List Atom} {q : Atom}
+    (d : Deriv (bunion B (facts T)) Γ q) : Deriv B (Γ ++ T) q := by
+  induction d with
+  | @ref Γ p hp => exact Deriv.ref (List.mem_append.mpr (Or.inl hp))
+  | @app Γ r hr _ ih =>
+    cases hr with
+    | inl hB =>
+      refine Deriv.app r hB (fun pq hpq => ?_)
+      have h := ih pq hpq
+      rw [List.append_assoc] at h
+      exact h
+    | inr hA => exact Deriv.ref (List.mem_append.mpr (Or.inr hA.2))
+
+-- contexto → hechos
+theorem Deriv.ctx_to_facts {C : Base} {Γ Δ : List Atom} {q : Atom}
+    (d : Deriv C Δ q) : ∀ {P : List Atom}, (∀ t, t ∈ Δ → t ∈ P ∨ t ∈ Γ) →
+      Deriv (bunion C (facts Γ)) P q := by
+  induction d with
+  | @ref Δ p hp =>
+    intro P hP
+    cases hP p hp with
+    | inl h => exact Deriv.ref h
+    | inr h => exact Deriv.app ⟨[], p⟩ (Or.inr ⟨rfl, h⟩) (by intro _ h'; cases h')
+  | @app Δ r hr _ ih =>
+    intro P hP
+    refine Deriv.app r (Or.inl hr) (fun pq hpq => ih pq hpq ?_)
+    intro t ht
+    cases List.mem_append.mp ht with
+    | inl h => exact Or.inl (List.mem_append.mpr (Or.inl h))
+    | inr h =>
+      cases hP t h with
+      | inl h' => exact Or.inl (List.mem_append.mpr (Or.inr h'))
+      | inr h' => exact Or.inr h'
+
+-- corte sobre átomos
+theorem Deriv.cut_atoms {B C : Base} (hBC : Ext B C) {Γ : List Atom} {q : Atom}
+    (d : Deriv B Γ q) : ∀ {S : List Atom}, (∀ t, t ∈ Γ → t ∈ S ∨ Deriv C [] t) →
+      Deriv C S q := by
+  induction d with
+  | @ref Γ p hp =>
+    intro S hS
+    cases hS p hp with
+    | inl h => exact Deriv.ref h
+    | inr h => exact Deriv.weaken h (fun _ hx => by cases hx)
+  | @app Γ r hr _ ih =>
+    intro S hS
+    refine Deriv.app r (hBC r hr) (fun pq hpq => ih pq hpq ?_)
+    intro t ht
+    cases List.mem_append.mp ht with
+    | inl h => exact Or.inl (List.mem_append.mpr (Or.inl h))
+    | inr h =>
+      cases hS t h with
+      | inl h' => exact Or.inl (List.mem_append.mpr (Or.inr h'))
+      | inr h' => exact Or.inr h'
+
+-- adecuación atómica (Sandqvist, Lema 2.2)
+theorem atomic_adequacy {B : Base} {T : List Atom} {u : Atom} :
+    Deriv B T u ↔ ∀ C, Ext B C → (∀ t, t ∈ T → Deriv C [] t) → Deriv C [] u := by
+  constructor
+  · intro d C hBC hT
+    exact Deriv.cut_atoms hBC d (fun t ht => Or.inr (hT t ht))
+  · intro h
+    have hC := h (bunion B (facts T)) (fun _ hr => Or.inl hr)
+      (fun t ht => Deriv.app ⟨[], t⟩ (Or.inr ⟨rfl, ht⟩) (by intro _ h'; cases h'))
+    exact Deriv.facts_to_ctx hC
+
+/-! ## Reglas como fórmulas -/
+
+-- φ₁ → … → φₙ → ψ
+def impF : List Form → Form → Form
+  | [],     ψ => ψ
+  | φ :: L, ψ => .imp φ (impF L ψ)
+
+theorem supp_impF (L : List Form) (ψ : Form) : ∀ {B : Base},
+    supp B (impF L ψ) ↔ ∀ C, Ext B C → (∀ φ, φ ∈ L → supp C φ) → supp C ψ := by
+  induction L with
+  | nil =>
+    intro B
+    simp only [impF]
+    constructor
+    · intro h C hBC _; exact supp_mono ψ hBC h
+    · intro h; exact h B (Ext.refl B) (fun _ hφ => by cases hφ)
+  | cons φ L ih =>
+    intro B
+    simp only [impF, supp]
+    constructor
+    · intro h C hBC hL
+      have h1 := h C hBC (hL φ (List.mem_cons.mpr (Or.inl rfl)))
+      exact (ih.mp h1) C (Ext.refl C) (fun θ hθ => hL θ (List.mem_cons.mpr (Or.inr hθ)))
+    · intro h C hBC hφ
+      apply ih.mpr
+      intro D hCD hL
+      apply h D (Ext.trans hBC hCD)
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact supp_mono _ hCD hφ
+      | inr h' => exact hL θ h'
+
+-- (P ⇒ q) ↦ p₁ → … → q
+def premForm (pq : List Atom × Atom) : Form := impF (pq.1.map Form.atom) (.atom pq.2)
+
+theorem supp_prem (pq : List Atom × Atom) {C : Base} :
+    supp C (premForm pq) ↔ Deriv C pq.1 pq.2 := by
+  unfold premForm
+  rw [supp_impF, atomic_adequacy]
+  constructor
+  · intro h D hCD hT
+    have := h D hCD (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro t ht =>
+        cases ht with
+        | intro htm e => subst e; simp only [supp]; exact hT t htm)
+    simp only [supp] at this
+    exact this
+  · intro h D hCD hL
+    simp only [supp]
+    exact h D hCD (fun t ht => by
+      have := hL (.atom t) (List.mem_map.mpr ⟨t, ht, rfl⟩)
+      simp only [supp] at this
+      exact this)
+
+-- regla ↦ fórmula
+def ruleForm (r : Rule) : Form := impF (r.prems.map premForm) (.atom r.concl)
+
+-- admisible en toda extensión
+def Adm (C : Base) (r : Rule) : Prop :=
+  ∀ D, Ext C D → (∀ pq, pq ∈ r.prems → Deriv D pq.1 pq.2) → Deriv D [] r.concl
+
+theorem supp_rule (r : Rule) {C : Base} : supp C (ruleForm r) ↔ Adm C r := by
+  unfold ruleForm Adm
+  rw [supp_impF]
+  constructor
+  · intro h D hCD hP
+    have := h D hCD (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro pq hpq =>
+        cases hpq with
+        | intro hm e => subst e; exact (supp_prem pq).mpr (hP pq hm))
+    simp only [supp] at this
+    exact this
+  · intro h D hCD hL
+    simp only [supp]
+    exact h D hCD (fun pq hm => (supp_prem pq).mp (hL _ (List.mem_map.mpr ⟨pq, hm, rfl⟩)))
+
+-- eliminación de reglas admisibles
+theorem Deriv.elim_adm {B C : Base} {Sig : List Rule} (hBC : Ext B C)
+    (hA : ∀ r, r ∈ Sig → Adm C r) {Γ : List Atom} {q : Atom}
+    (d : Deriv (bunion B (ofList Sig)) Γ q) : Deriv C Γ q := by
+  induction d with
+  | @ref Γ p hp => exact Deriv.ref hp
+  | @app Γ r hr _ ih =>
+    cases hr with
+    | inl hB => exact Deriv.app r (hBC r hB) ih
+    | inr hS =>
+      have hD : Deriv (bunion C (facts Γ)) [] r.concl :=
+        hA r hS (bunion C (facts Γ)) (fun _ h => Or.inl h)
+          (fun pq hpq => Deriv.ctx_to_facts (ih pq hpq) (fun t ht => List.mem_append.mp ht))
+      exact Deriv.facts_to_ctx hD
+
+/-! ## Exportación (conclusión atómica) -/
+
+-- ⊢_{B ∪ Σ} p ⟺ ⊩_B Σ* → p
+theorem export_atom (B : Base) (Sig : List Rule) (p : Atom) :
+    Deriv (bunion B (ofList Sig)) [] p ↔ supp B (impF (Sig.map ruleForm) (.atom p)) := by
+  rw [supp_impF]
+  constructor
+  · intro d C hBC hS
+    simp only [supp]
+    refine Deriv.elim_adm hBC ?_ d
+    intro r hr
+    exact (supp_rule r).mp (hS _ (List.mem_map.mpr ⟨r, hr, rfl⟩))
+  · intro h
+    have := h (bunion B (ofList Sig)) (fun _ hr => Or.inl hr) (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro r hr =>
+        cases hr with
+        | intro hm e =>
+          subst e
+          apply (supp_rule r).mpr
+          intro D hD hP
+          exact Deriv.app r (hD r (Or.inr hm)) (fun pq hpq => by
+            rw [List.append_nil]; exact hP pq hpq))
+    simp only [supp] at this
+    exact this
+
+/-! ## Inferones -/
+
+-- ⟨⟨P, 𝒫, b⟩⟩; polaridad codificada en el átomo
+structure Inferon where
+  a   : Atom
+  loc : List Rule
+
+-- (At), Collinson–Eckhardt–Pym
+def suppInf (B : Base) (ι : Inferon) : Prop := Deriv (bunion B (ofList ι.loc)) [] ι.a
+
+-- 𝒫* → ⟨P, b⟩
+def Inferon.form (ι : Inferon) : Form := impF (ι.loc.map ruleForm) (.atom ι.a)
+
+-- inferón = fórmula de IPL
+theorem inferon_definable (B : Base) (ι : Inferon) : suppInf B ι ↔ supp B ι.form :=
+  export_atom B ι.loc ι.a
+
 /-! ## Completitud -/
 
 -- plan: aplanamiento φ ↦ φ♭, base 𝒩, lemas puente

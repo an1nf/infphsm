@@ -1654,4 +1654,1228 @@ theorem finite_incomplete : ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ �
         exact (supp_ruleF r).mpr (fun L' hL' hP => Deriv.app r (hL' r hm) (fun pq hpq => by
           rw [List.append_nil]; exact hP pq hpq)))
 
+/-! ## ⊥ en la clase finita
+  Infinitos átomos, bases finitas: ⊥ nunca se soporta. Entonces ¬φ es rígida, ¬¬p es válida
+  y la regla de Harrop vale trivialmente. Sin ⊥, la división p → q ∨ r separa la clase de NJ. -/
+
+-- suma de conclusiones
+def cbound : List Rule → Nat
+  | []     => 0
+  | r :: L => r.concl + cbound L
+
+theorem concl_le {r : Rule} (L : List Rule) (h : r ∈ L) : r.concl ≤ cbound L := by
+  induction L with
+  | nil => cases h
+  | cons s L ih =>
+    show r.concl ≤ s.concl + cbound L
+    cases List.mem_cons.mp h with
+    | inl e => rw [e]; exact Nat.le_add_right _ _
+    | inr h' => exact Nat.le_trans (ih h') (Nat.le_add_left _ _)
+
+-- sin hipótesis solo salen conclusiones de L
+theorem deriv_concl {L : List Rule} {p : Atom} (d : Deriv (ofList L) [] p) : p ≤ cbound L := by
+  cases d with
+  | ref h => cases h
+  | app r hr _ => exact concl_le L hr
+
+theorem finite_bot (L : List Rule) : ¬ suppF L .bot := fun h =>
+  Nat.not_succ_le_self (cbound L) (deriv_concl (h (cbound L + 1)))
+
+-- ¬p nunca: basta añadir el hecho p
+theorem finite_neg (L : List Rule) (p : Atom) : ¬ suppF L (negF (.atom p)) := fun h =>
+  finite_bot (⟨[], p⟩ :: L)
+    (h (⟨[], p⟩ :: L) (fun _ hr => List.mem_cons.mpr (Or.inr hr))
+      (Deriv.app ⟨[], p⟩ mem0 (fun _ hpq => by cases hpq)))
+
+-- ¬φ no depende de la base
+theorem finite_neg_rigid (φ : Form) {L : List Rule} (h : suppF L (negF φ)) (L' : List Rule) :
+    suppF L' (negF φ) := fun L2 _ h2 =>
+  absurd (h (L2 ++ L) (fun _ hr => List.mem_append.mpr (Or.inr hr))
+    (suppF_mono φ (fun _ hr => List.mem_append.mpr (Or.inl hr)) h2)) (finite_bot _)
+
+-- ¬¬p válida en la clase finita
+theorem finite_dn (p : Atom) : validF [] (negF (negF (.atom p))) :=
+  fun _ _ L' _ h => absurd h (finite_neg L' p)
+
+-- un mundo, ningún átomo
+def kmod1 : Kripke where
+  le v w := v = w
+  val _ _ := False
+  refl _ := rfl
+  trans _ _ _ h₁ h₂ := h₁.trans h₂
+  mono _ _ _ _ hv := hv
+
+theorem dn_not_nj (p : Atom) : ¬ NJ [] (negF (negF (.atom p))) := fun d =>
+  kripke_sound kmod1 d 0 (fun _ hθ => by cases hθ) 0 rfl (fun _ _ hp => hp)
+
+-- incompletitud inmediata
+theorem finite_incomplete_dn : ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ → NJ Γ φ) :=
+  fun hc => dn_not_nj 0 (hc [] _ (finite_dn 0))
+
+-- regla de Harrop válida en la clase finita (¬φ rígida)
+theorem finite_harrop (φ ψ χ : Form) :
+    validF [.imp (negF φ) (.or ψ χ)] (.or (.imp (negF φ) ψ) (.imp (negF φ) χ)) := by
+  intro L hL
+  have hH : suppF L (.imp (negF φ) (.or ψ χ)) := hL _ mem0
+  cases Classical.em (suppF L (negF φ)) with
+  | inl hn =>
+    have hor : suppF L (.or ψ χ) := hH L (fun _ h => h) hn
+    have d : NJ [.or ψ χ] (.or (.imp (negF φ) ψ) (.imp (negF φ) χ)) :=
+      NJ.orE (NJ.hyp mem0)
+        (NJ.orI₁ (NJ.impI (NJ.hyp (List.mem_cons.mpr (Or.inr mem0)))))
+        (NJ.orI₂ (NJ.impI (NJ.hyp (List.mem_cons.mpr (Or.inr mem0)))))
+    exact soundnessF d L (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hor
+      | inr h => cases h)
+  | inr hn =>
+    have hi : suppF L (.imp (negF φ) ψ) := fun _ _ h => absurd (finite_neg_rigid φ h L) hn
+    have d : NJ [.imp (negF φ) ψ] (.or (.imp (negF φ) ψ) (.imp (negF φ) χ)) :=
+      NJ.orI₁ (NJ.hyp mem0)
+    exact soundnessF d L (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hi
+      | inr h => cases h)
+
+-- sin ⊥: p → q ∨ r  y  (p → q) ∨ (p → r)
+def splitH : Form := .imp (.atom 0) (.or (.atom 1) (.atom 2))
+def splitC : Form := .or (.imp (.atom 0) (.atom 1)) (.imp (.atom 0) (.atom 2))
+
+-- mundos: 0 raíz; 1 ⊩ p, q; 2 ⊩ p, r
+def smod : Kripke where
+  le v w := v = w ∨ v = 0
+  val w x := (w = 1 ∧ (x = 0 ∨ x = 1)) ∨ (w = 2 ∧ (x = 0 ∨ x = 2))
+  refl _ := Or.inl rfl
+  trans u v w h₁ h₂ := by
+    cases h₁ with
+    | inl e => subst e; exact h₂
+    | inr e => exact Or.inr e
+  mono v w x h hv := by
+    cases h with
+    | inl e => subst e; exact hv
+    | inr e =>
+      subst e
+      cases hv with
+      | inl h' => exact absurd h'.1 (by decide)
+      | inr h' => exact absurd h'.1 (by decide)
+
+theorem smod_H : forces smod 0 splitH := by
+  intro v _ hv
+  cases hv with
+  | inl h =>
+    have e := h.1
+    subst e
+    exact Or.inl (Or.inl ⟨rfl, Or.inr rfl⟩)
+  | inr h =>
+    have e := h.1
+    subst e
+    exact Or.inr (Or.inr ⟨rfl, Or.inr rfl⟩)
+
+theorem smod_C : ¬ forces smod 0 splitC := by
+  intro h
+  cases h with
+  | inl h₁ =>
+    have hq := h₁ 2 (Or.inr rfl) (Or.inr ⟨rfl, Or.inl rfl⟩)
+    cases hq with
+    | inl h => exact absurd h.1 (by decide)
+    | inr h =>
+      cases h.2 with
+      | inl e => exact absurd e (by decide)
+      | inr e => exact absurd e (by decide)
+  | inr h₂ =>
+    have hr := h₂ 1 (Or.inr rfl) (Or.inl ⟨rfl, Or.inl rfl⟩)
+    cases hr with
+    | inl h =>
+      cases h.2 with
+      | inl e => exact absurd e (by decide)
+      | inr e => exact absurd e (by decide)
+    | inr h => exact absurd h.1 (by decide)
+
+theorem split_not_derivable : ¬ NJ [splitH] splitC := fun d =>
+  smod_C (kripke_sound smod d 0 (fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact smod_H
+    | inr h => cases h))
+
+-- incompletitud sin ⊥: el esquema de finite_incomplete con p en lugar de ¬p
+theorem finite_incomplete_pos : ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ → NJ Γ φ) := by
+  intro hc
+  apply split_not_derivable
+  apply hc
+  intro L hL
+  have hH : suppF L splitH := hL _ mem0
+  have v1 : validF (L.map ruleForm) splitH := by
+    intro L' hL'
+    have hA : ∀ r, r ∈ L → AdmF L' r :=
+      fun r hr => (supp_ruleF r).mp (hL' _ (List.mem_map.mpr ⟨r, hr, rfl⟩))
+    exact suppF_elim_adm splitH hA
+      (suppF_mono splitH (fun _ h => List.mem_append.mpr (Or.inr h)) hH)
+  have d1 := hc _ _ v1
+  have d2 : NJ (.atom 0 :: L.map ruleForm) (.or (.atom 1) (.atom 2)) :=
+    NJ.impE (NJ.weaken d1 (fun θ hθ => List.mem_cons.mpr (Or.inr hθ))) (NJ.hyp mem0)
+  have hΓ : ∀ θ, θ ∈ .atom 0 :: L.map ruleForm → harrop θ := fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact trivial
+    | inr h =>
+      cases List.mem_map.mp h with
+      | intro r hr =>
+        cases hr with
+        | intro _ e => subst e; exact harrop_rule r
+  have d3 : NJ (L.map ruleForm) splitC := by
+    cases harrop_dp hΓ d2 with
+    | inl h => exact NJ.orI₁ (NJ.impI h)
+    | inr h => exact NJ.orI₂ (NJ.impI h)
+  exact soundnessF d3 L (fun θ hθ => by
+    cases List.mem_map.mp hθ with
+    | intro r hr =>
+      cases hr with
+      | intro hm e =>
+        subst e
+        exact (supp_ruleF r).mpr (fun L' hL' hP => Deriv.app r (hL' r hm) (fun pq hpq => by
+          rw [List.append_nil]; exact hP pq hpq)))
+
+/-! ## ∨ de Sandqvist en la clase finita: el átomo fresco
+  Una base finita concreta deja átomos frescos. Con uno fresco r, las reglas b ⇒ r y c ⇒ r
+  no derivan r salvo que se derive b o c: la ∨ de Sandqvist tiene la propiedad de disyunción
+  en átomos, y la división vale (PCS 2015, prueba 2). -/
+
+def sumN : List Nat → Nat
+  | []     => 0
+  | x :: l => x + sumN l
+
+theorem le_sumN {a : Nat} (l : List Nat) (h : a ∈ l) : a ≤ sumN l := by
+  induction l with
+  | nil => cases h
+  | cons x l ih =>
+    show a ≤ x + sumN l
+    cases List.mem_cons.mp h with
+    | inl e => rw [e]; exact Nat.le_add_right _ _
+    | inr h' => exact Nat.le_trans (ih h') (Nat.le_add_left _ _)
+
+def pbound : List (List Atom × Atom) → Nat
+  | []      => 0
+  | pq :: l => pq.2 + sumN pq.1 + pbound l
+
+theorem le_pbound {pq : List Atom × Atom} (l : List (List Atom × Atom)) (h : pq ∈ l) :
+    pq.2 + sumN pq.1 ≤ pbound l := by
+  induction l with
+  | nil => cases h
+  | cons x l ih =>
+    show pq.2 + sumN pq.1 ≤ x.2 + sumN x.1 + pbound l
+    cases List.mem_cons.mp h with
+    | inl e => rw [e]; exact Nat.le_add_right _ _
+    | inr h' => exact Nat.le_trans (ih h') (Nat.le_add_left _ _)
+
+-- cota de los átomos de una regla y de una lista de reglas
+def rbound (x : Rule) : Nat := x.concl + pbound x.prems
+
+def lbound : List Rule → Nat
+  | []     => 0
+  | x :: L => rbound x + lbound L
+
+theorem le_lbound {x : Rule} (L : List Rule) (h : x ∈ L) : rbound x ≤ lbound L := by
+  induction L with
+  | nil => cases h
+  | cons y L ih =>
+    show rbound x ≤ rbound y + lbound L
+    cases List.mem_cons.mp h with
+    | inl e => rw [e]; exact Nat.le_add_right _ _
+    | inr h' => exact Nat.le_trans (ih h') (Nat.le_add_left _ _)
+
+-- r > lbound L no aparece en L
+theorem fresh_of_gt {L : List Rule} {r : Atom} (hr : lbound L < r) :
+    ∀ x, x ∈ L → x.concl ≠ r ∧ ∀ pq, pq ∈ x.prems → pq.2 ≠ r ∧ r ∉ pq.1 := by
+  intro x hx
+  have hx' : rbound x ≤ lbound L := le_lbound L hx
+  constructor
+  · intro e
+    have h1 : x.concl ≤ rbound x := Nat.le_add_right _ _
+    rw [e] at h1
+    exact Nat.lt_irrefl _ (Nat.lt_of_le_of_lt (Nat.le_trans h1 hx') hr)
+  · intro pq hpq
+    have hp : pq.2 + sumN pq.1 ≤ rbound x :=
+      Nat.le_trans (le_pbound x.prems hpq) (Nat.le_add_left _ _)
+    constructor
+    · intro e
+      have h1 : pq.2 ≤ rbound x := Nat.le_trans (Nat.le_add_right _ _) hp
+      rw [e] at h1
+      exact Nat.lt_irrefl _ (Nat.lt_of_le_of_lt (Nat.le_trans h1 hx') hr)
+    · intro hm
+      have h1 : r ≤ rbound x :=
+        Nat.le_trans (le_sumN pq.1 hm) (Nat.le_trans (Nat.le_add_left _ _) hp)
+      exact Nat.lt_irrefl _ (Nat.lt_of_le_of_lt (Nat.le_trans h1 hx') hr)
+
+-- reglas nuevas con conclusión fresca: fuera de r nada cambia
+theorem deriv_fresh {L E : List Rule} {r : Atom}
+    (hL : ∀ x, x ∈ L → x.concl ≠ r ∧ ∀ pq, pq ∈ x.prems → pq.2 ≠ r ∧ r ∉ pq.1)
+    (hE : ∀ e, e ∈ E → e.concl = r) {S : List Atom} {q : Atom}
+    (d : Deriv (ofList (L ++ E)) S q) : r ∉ S → q ≠ r → Deriv (ofList L) S q := by
+  induction d with
+  | ref h => intro _ _; exact Deriv.ref h
+  | app x hx _ ih =>
+    intro hS hq
+    cases List.mem_append.mp hx with
+    | inr he => exact absurd (hE x he) hq
+    | inl hl =>
+      exact Deriv.app x hl (fun pq hpq => ih pq hpq
+        (fun hm => by
+          cases List.mem_append.mp hm with
+          | inl h1 => exact ((hL x hl).2 pq hpq).2 h1
+          | inr h2 => exact hS h2)
+        ((hL x hl).2 pq hpq).1)
+
+-- el último paso hacia r usa una regla nueva
+theorem last_fresh {L E : List Rule} {r : Atom}
+    (hL : ∀ x, x ∈ L → x.concl ≠ r ∧ ∀ pq, pq ∈ x.prems → pq.2 ≠ r ∧ r ∉ pq.1)
+    {S : List Atom} {q : Atom} (d : Deriv (ofList (L ++ E)) S q) (hS : r ∉ S) (hq : q = r) :
+    ∃ e, e ∈ E ∧ ∀ pq, pq ∈ e.prems → Deriv (ofList (L ++ E)) (pq.1 ++ S) pq.2 := by
+  cases d with
+  | ref h => subst hq; exact absurd h hS
+  | app x hx hp =>
+    cases List.mem_append.mp hx with
+    | inl hl => exact absurd hq ((hL x hl).1)
+    | inr he => exact ⟨x, he, hp⟩
+
+theorem dp_of_fresh {L : List Rule} {b c r : Atom}
+    (hfr : ∀ x, x ∈ L → x.concl ≠ r ∧ ∀ pq, pq ∈ x.prems → pq.2 ≠ r ∧ r ∉ pq.1)
+    (hb : b ≠ r) (hc : c ≠ r) (h : suppF L (.or (.atom b) (.atom c))) :
+    Deriv (ofList L) [] b ∨ Deriv (ofList L) [] c := by
+  have hE : ∀ e, e ∈ [(⟨[([], b)], r⟩ : Rule), ⟨[([], c)], r⟩] → e.concl = r := by
+    intro e he
+    cases List.mem_cons.mp he with
+    | inl e1 => subst e1; rfl
+    | inr he' =>
+      cases List.mem_cons.mp he' with
+      | inl e2 => subst e2; rfl
+      | inr he'' => cases he''
+  have hext : Ext (ofList L) (ofList (L ++ [(⟨[([], b)], r⟩ : Rule), ⟨[([], c)], r⟩])) :=
+    fun _ hx => List.mem_append.mpr (Or.inl hx)
+  have d := h _ hext r
+    (fun _ hL'' hb'' => Deriv.app ⟨[([], b)], r⟩
+      (hL'' _ (List.mem_append.mpr (Or.inr mem0)))
+      (fun pq hpq => by
+        cases List.mem_cons.mp hpq with
+        | inl e => subst e; exact hb''
+        | inr h' => cases h'))
+    (fun _ hL'' hc'' => Deriv.app ⟨[([], c)], r⟩
+      (hL'' _ (List.mem_append.mpr (Or.inr mem1)))
+      (fun pq hpq => by
+        cases List.mem_cons.mp hpq with
+        | inl e => subst e; exact hc''
+        | inr h' => cases h'))
+  cases last_fresh hfr d (fun h' => by cases h') rfl with
+  | intro e he =>
+    cases List.mem_cons.mp he.1 with
+    | inl e1 =>
+      subst e1
+      have d1 : Deriv (ofList (L ++ [(⟨[([], b)], r⟩ : Rule), ⟨[([], c)], r⟩])) [] b :=
+        he.2 ([], b) mem0
+      exact Or.inl (deriv_fresh hfr hE d1 (fun h' => by cases h') hb)
+    | inr he' =>
+      cases List.mem_cons.mp he' with
+      | inl e2 =>
+        subst e2
+        have d2 : Deriv (ofList (L ++ [(⟨[([], b)], r⟩ : Rule), ⟨[([], c)], r⟩])) [] c :=
+          he.2 ([], c) mem0
+        exact Or.inr (deriv_fresh hfr hE d2 (fun h' => by cases h') hc)
+      | inr he'' => cases he''
+
+-- propiedad de disyunción en átomos para la clase finita
+theorem finite_dp_atom (L : List Rule) (b c : Atom) (h : suppF L (.or (.atom b) (.atom c))) :
+    Deriv (ofList L) [] b ∨ Deriv (ofList L) [] c :=
+  dp_of_fresh (r := lbound L + b + c + 1)
+    (fresh_of_gt (Nat.lt_succ_of_le (Nat.le_trans (Nat.le_add_right _ b) (Nat.le_add_right _ c))))
+    (Nat.ne_of_lt (Nat.lt_succ_of_le
+      (Nat.le_trans (Nat.le_add_left b (lbound L)) (Nat.le_add_right _ c))))
+    (Nat.ne_of_lt (Nat.lt_succ_of_le (Nat.le_add_left c (lbound L + b))))
+    h
+
+-- cortar un hecho añadido
+theorem cut_fact {L L' : List Rule} {a : Atom} (hL : Ext (ofList L) (ofList L'))
+    (ha : Deriv (ofList L') [] a) {S : List Atom} {q : Atom}
+    (d : Deriv (ofList (⟨[], a⟩ :: L)) S q) : Deriv (ofList L') S q := by
+  induction d with
+  | ref h => exact Deriv.ref h
+  | app x hx _ ih =>
+    cases List.mem_cons.mp hx with
+    | inl e => subst e; exact Deriv.weaken ha (fun _ hx => by cases hx)
+    | inr hl => exact Deriv.app x (hL x hl) ih
+
+-- la división es válida en la clase finita
+theorem finite_split : validF [splitH] splitC := by
+  intro L hL
+  have hH : suppF L (.imp (.atom 0) (.or (.atom 1) (.atom 2))) := hL _ mem0
+  have hp : suppF (⟨[], 0⟩ :: L) (.atom 0) := Deriv.app ⟨[], 0⟩ mem0 (fun _ h => by cases h)
+  have hor := hH (⟨[], 0⟩ :: L) (fun _ hr => List.mem_cons.mpr (Or.inr hr)) hp
+  cases finite_dp_atom _ 1 2 hor with
+  | inl hq =>
+    have hi : suppF L (.imp (.atom 0) (.atom 1)) := fun _ hL' hp' => cut_fact hL' hp' hq
+    have d : NJ [.imp (.atom 0) (.atom 1)] splitC := NJ.orI₁ (NJ.hyp mem0)
+    exact soundnessF d L (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hi
+      | inr h => cases h)
+  | inr hr =>
+    have hi : suppF L (.imp (.atom 0) (.atom 2)) := fun _ hL' hp' => cut_fact hL' hp' hr
+    have d : NJ [.imp (.atom 0) (.atom 2)] splitC := NJ.orI₂ (NJ.hyp mem0)
+    exact soundnessF d L (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hi
+      | inr h => cases h)
+
+-- incompletitud directa, sin ⊥ ni completitud supuesta
+theorem finite_incomplete_split : ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ → NJ Γ φ) :=
+  fun hc => split_not_derivable (hc _ _ finite_split)
+
+/-! ## Validez esquemática: ¬φ ∨ ¬¬φ (Kremer, en Goldfarb 2016)
+  Por la rigidez de ¬, el esquema vale para toda φ: la clase finita tampoco es
+  completa para la validez esquemática, a diferencia de la noción revisada de Goldfarb. -/
+
+theorem finite_kremer (φ : Form) : validF [] (.or (negF φ) (negF (negF φ))) := by
+  intro L _
+  cases Classical.em (∃ L₀, suppF L₀ (negF φ)) with
+  | inl h =>
+    cases h with
+    | intro L₀ h₀ =>
+      have d : NJ [negF φ] (.or (negF φ) (negF (negF φ))) := NJ.orI₁ (NJ.hyp mem0)
+      exact soundnessF d L (fun θ hθ => by
+        cases List.mem_cons.mp hθ with
+        | inl e => subst e; exact finite_neg_rigid φ h₀ L
+        | inr h' => cases h')
+  | inr h =>
+    have hn : suppF L (negF (negF φ)) := fun L' _ h' => False.elim (h ⟨L', h'⟩)
+    have d : NJ [negF (negF φ)] (.or (negF φ) (negF (negF φ))) := NJ.orI₂ (NJ.hyp mem0)
+    exact soundnessF d L (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hn
+      | inr h' => cases h')
+
+-- mundos: 0 raíz; 1 ⊩ p; los demás, nada
+def kmodK : Kripke where
+  le v w := v = w ∨ v = 0
+  val w x := w = 1 ∧ x = 0
+  refl _ := Or.inl rfl
+  trans u v w h₁ h₂ := by
+    cases h₁ with
+    | inl e => subst e; exact h₂
+    | inr e => exact Or.inr e
+  mono v w x h hv := by
+    cases h with
+    | inl e => subst e; exact hv
+    | inr e =>
+      subst e
+      cases hv with
+      | intro h1 _ => exact absurd h1 (by decide)
+
+theorem kremer_not_nj : ¬ NJ [] (.or (negF (.atom 0)) (negF (negF (.atom 0)))) := fun d => by
+  have h := kripke_sound kmodK d 0 (fun _ hθ => by cases hθ)
+  cases h with
+  | inl h₁ => exact h₁ 1 (Or.inr rfl) ⟨rfl, rfl⟩
+  | inr h₂ =>
+    apply h₂ 2 (Or.inr rfl)
+    intro u hu hv
+    cases hu with
+    | inl e =>
+      subst e
+      cases hv with
+      | intro h1 _ => exact absurd h1 (by decide)
+    | inr e => exact absurd e (by decide)
+
+theorem finite_schematic_incomplete :
+    ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ → NJ Γ φ) :=
+  fun hc => kremer_not_nj (hc [] _ (finite_kremer (.atom 0)))
+
+/-! ## Conjetura inquisitiva, I: 𝒩 finita y simulación semántica
+  Sin ∨ ni ⊥, la base 𝒩 de Sandqvist es finita: (†) vale en la clase finita y el
+  fragmento es completo. Una derivación en L ∪ 𝒩 se traduce en soporte sobre las
+  extensiones de L (simulación semántica); no hace falta renombrar átomos. -/
+
+theorem mem_nil_false {α : Type} {x : α} (h : x ∈ ([] : List α)) : False := by cases h
+
+-- sin ∨ ni ⊥
+def nvb : Form → Prop
+  | .atom _  => True
+  | .bot     => False
+  | .and a b => nvb a ∧ nvb b
+  | .or _ _  => False
+  | .imp a b => nvb a ∧ nvb b
+
+theorem nvb_subs (χ : Form) : nvb χ → ∀ ζ, ζ ∈ subs χ → nvb ζ := by
+  induction χ with
+  | atom _ =>
+    intro _ ζ hζ
+    cases List.mem_cons.mp hζ with
+    | inl e => subst e; exact True.intro
+    | inr h => exact (mem_nil_false h).elim
+  | bot => intro h; exact False.elim h
+  | or _ _ _ _ => intro h; exact False.elim h
+  | and _ _ iha ihb =>
+    intro h ζ hζ
+    cases List.mem_cons.mp hζ with
+    | inl e => subst e; exact h
+    | inr h' =>
+      cases List.mem_append.mp h' with
+      | inl ha => exact iha (And.left h) ζ ha
+      | inr hb => exact ihb (And.right h) ζ hb
+  | imp _ _ iha ihb =>
+    intro h ζ hζ
+    cases List.mem_cons.mp hζ with
+    | inl e => subst e; exact h
+    | inr h' =>
+      cases List.mem_append.mp h' with
+      | inl ha => exact iha (And.left h) ζ ha
+      | inr hb => exact ihb (And.right h) ζ hb
+
+theorem nvb_subsL (L : List Form) (h : ∀ θ, θ ∈ L → nvb θ) : ∀ χ, χ ∈ subsL L → nvb χ := by
+  induction L with
+  | nil => intro χ hχ; exact (mem_nil_false hχ).elim
+  | cons θ L ih =>
+    intro χ hχ
+    cases List.mem_append.mp hχ with
+    | inl h1 => exact nvb_subs θ (h θ mem0) χ h1
+    | inr h2 => exact ih (fun θ' hθ' => h θ' (List.mem_cons.mpr (Or.inr hθ'))) χ h2
+
+-- reglas de 𝒩 como lista (vacía en átomos, ⊥ y ∨)
+def nRuleL (fl : Form → Atom) : Form → List Rule
+  | .atom _  => []
+  | .bot     => []
+  | .or _ _  => []
+  | .and a b => [⟨[([], fl a), ([], fl b)], fl (.and a b)⟩,
+                 ⟨[([], fl (.and a b))], fl a⟩,
+                 ⟨[([], fl (.and a b))], fl b⟩]
+  | .imp a b => [⟨[([fl a], fl b)], fl (.imp a b)⟩,
+                 ⟨[([], fl (.imp a b)), ([], fl a)], fl b⟩]
+
+def nL (fl : Form → Atom) : List Form → List Rule
+  | []     => []
+  | χ :: Ξ => nRuleL fl χ ++ nL fl Ξ
+
+theorem mem_nL {fl : Form → Atom} {Ξ : List Form} {χ : Form} (hχ : χ ∈ Ξ) {x : Rule}
+    (hx : x ∈ nRuleL fl χ) : x ∈ nL fl Ξ := by
+  induction Ξ with
+  | nil => exact (mem_nil_false hχ).elim
+  | cons θ Ξ ih =>
+    cases List.mem_cons.mp hχ with
+    | inl e => subst e; exact List.mem_append.mpr (Or.inl hx)
+    | inr h => exact List.mem_append.mpr (Or.inr (ih h))
+
+theorem nL_inv {fl : Form → Atom} {Ξ : List Form} {x : Rule} (h : x ∈ nL fl Ξ) :
+    ∃ χ, χ ∈ Ξ ∧ x ∈ nRuleL fl χ := by
+  induction Ξ with
+  | nil => exact (mem_nil_false h).elim
+  | cons θ Ξ ih =>
+    cases List.mem_append.mp h with
+    | inl h1 => exact ⟨θ, mem0, h1⟩
+    | inr h2 =>
+      cases ih h2 with
+      | intro χ hχ => exact ⟨χ, List.mem_cons.mpr (Or.inr hχ.1), hχ.2⟩
+
+theorem nRuleL_sub {fl : Form → Atom} {χ : Form} {x : Rule} (hx : x ∈ nRuleL fl χ) :
+    nRule fl χ x := by
+  cases χ with
+  | atom _ => exact (mem_nil_false hx).elim
+  | bot => exact (mem_nil_false hx).elim
+  | or _ _ => exact (mem_nil_false hx).elim
+  | and _ _ =>
+    cases List.mem_cons.mp hx with
+    | inl e => exact Or.inl e
+    | inr h =>
+      cases List.mem_cons.mp h with
+      | inl e => exact Or.inr (Or.inl e)
+      | inr h' =>
+        cases List.mem_cons.mp h' with
+        | inl e => exact Or.inr (Or.inr e)
+        | inr h'' => exact (mem_nil_false h'').elim
+  | imp _ _ =>
+    cases List.mem_cons.mp hx with
+    | inl e => exact Or.inl e
+    | inr h =>
+      cases List.mem_cons.mp h with
+      | inl e => exact Or.inr e
+      | inr h' => exact (mem_nil_false h').elim
+
+theorem nL_sub_NBase {fl : Form → Atom} {Ξ : List Form} :
+    Ext (ofList (nL fl Ξ)) (NBase fl Ξ) := by
+  intro x hx
+  cases nL_inv hx with
+  | intro χ hχ => exact ⟨χ, hχ.1, nRuleL_sub hχ.2⟩
+
+-- (†) en la clase finita
+theorem daggerF {fl : Form → Atom} (hfl : ∀ p, fl (.atom p) = p) {Ξ : List Form}
+    (hcl : Closed Ξ) (hnv : ∀ χ, χ ∈ Ξ → nvb χ) (χ : Form) : χ ∈ Ξ →
+      ∀ {L : List Rule}, Ext (ofList (nL fl Ξ)) (ofList L) →
+        (suppF L χ ↔ Deriv (ofList L) [] (fl χ)) := by
+  induction χ with
+  | atom _ =>
+    intro _ L _
+    simp only [suppF, hfl]
+  | bot => intro hχ; exact False.elim (hnv _ hχ)
+  | or _ _ _ _ => intro hχ; exact False.elim (hnv _ hχ)
+  | and a b iha ihb =>
+    intro hχ L hNL
+    have ha := hcl _ hχ a (sub_l rfl)
+    have hb := hcl _ hχ b (sub_r rfl)
+    simp only [suppF]
+    constructor
+    · intro h
+      exact Deriv.app2 (hNL ⟨[([], fl a), ([], fl b)], fl (.and a b)⟩ (mem_nL hχ mem0))
+        ((iha ha hNL).mp h.1) ((ihb hb hNL).mp h.2)
+    · intro h
+      exact ⟨(iha ha hNL).mpr
+              (Deriv.app1 (hNL ⟨[([], fl (.and a b))], fl a⟩ (mem_nL hχ mem1)) h),
+             (ihb hb hNL).mpr
+              (Deriv.app1 (hNL ⟨[([], fl (.and a b))], fl b⟩ (mem_nL hχ mem2)) h)⟩
+  | imp a b iha ihb =>
+    intro hχ L hNL
+    have ha := hcl _ hχ a (sub_l rfl)
+    have hb := hcl _ hχ b (sub_r rfl)
+    simp only [suppF]
+    constructor
+    · intro h
+      refine Deriv.app1 (hNL ⟨[([fl a], fl b)], fl (.imp a b)⟩ (mem_nL hχ mem0)) ?_
+      show Deriv (ofList L) [fl a] (fl b)
+      rw [atomic_adequacyF]
+      intro D hCD hT
+      have hND := Ext.trans hNL hCD
+      exact (ihb hb hND).mp (h D hCD ((iha ha hND).mpr (hT _ mem0)))
+    · intro h D hCD hDa
+      have hND := Ext.trans hNL hCD
+      exact (ihb hb hND).mpr (Deriv.app2
+        (hND ⟨[([], fl (.imp a b)), ([], fl a)], fl b⟩ (mem_nL hχ mem1))
+        (Deriv.mono hCD h) ((iha ha hND).mp hDa))
+
+-- fragmento sin ∨ ni ⊥: la clase finita es completa
+theorem finite_complete_nvb {Γ : List Form} {φ : Form} (hΓ : ∀ θ, θ ∈ Γ → nvb θ)
+    (hφ : nvb φ) (hv : validF Γ φ) : NJ Γ φ := by
+  have hcl : Closed (Xi Γ φ) := subsL_closed _
+  have hnv : ∀ χ, χ ∈ Xi Γ φ → nvb χ := nvb_subsL (φ :: Γ) (fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => rw [e]; exact hφ
+    | inr h => exact hΓ θ h)
+  have hM : ∀ p, Form.atom p ∈ Xi Γ φ → p ≤ bnd Γ φ := fun p h => atom_le_sumAtL p _ h
+  have hun : ∀ χ, χ ∈ Xi Γ φ →
+      unflat (bnd Γ φ) (Xi Γ φ) (flat (bnd Γ φ) (Xi Γ φ) χ) = χ := unflat_flat hM
+  have hφX : φ ∈ Xi Γ φ := mem_subsL_of _ mem0
+  have hΓX : ∀ θ, θ ∈ Γ → θ ∈ Xi Γ φ :=
+    fun θ h => mem_subsL_of _ (List.mem_cons.mpr (Or.inr h))
+  -- Γ♭ ⊢_𝒩 φ♭, con 𝒩 finita
+  have hd : Deriv (ofList (nL (flat (bnd Γ φ) (Xi Γ φ)) (Xi Γ φ)))
+      (Γ.map (flat (bnd Γ φ) (Xi Γ φ))) (flat (bnd Γ φ) (Xi Γ φ) φ) := by
+    rw [atomic_adequacyF]
+    intro L' hNL hT
+    apply (daggerF (fl := flat (bnd Γ φ) (Xi Γ φ)) (fun _ => rfl) hcl hnv φ hφX hNL).mp
+    apply hv L'
+    intro θ hθ
+    exact (daggerF (fl := flat (bnd Γ φ) (Xi Γ φ)) (fun _ => rfl) hcl hnv θ (hΓX θ hθ) hNL).mpr
+      (hT _ (List.mem_map.mpr ⟨θ, hθ, rfl⟩))
+  have hs := simulation hcl hun
+    (Deriv.mono (nL_sub_NBase (fl := flat (bnd Γ φ) (Xi Γ φ))) hd)
+  rw [map_inv Γ (fun θ h => hun θ (hΓX θ h)), hun φ hφX] at hs
+  exact hs
+
+theorem finite_nvb_iff {Γ : List Form} {φ : Form} (hΓ : ∀ θ, θ ∈ Γ → nvb θ) (hφ : nvb φ) :
+    validF Γ φ ↔ NJ Γ φ :=
+  ⟨finite_complete_nvb hΓ hφ, soundnessF⟩
+
+-- simulación semántica: L ∪ 𝒩 ⊢_S q ⟹ (⊩ S♮ ⟹ ⊩ q♮) en toda extensión de L
+theorem ssim {fl : Form → Atom} {un : Atom → Form} {Ξ : List Form} (hcl : Closed Ξ)
+    (hun : ∀ χ, χ ∈ Ξ → un (fl χ) = χ) {L : List Rule}
+    (hL : ∀ x, x ∈ L → un x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → un pq.2 = .atom pq.2 ∧ ∀ t, t ∈ pq.1 → un t = .atom t)
+    {S : List Atom} {q : Atom} (d : Deriv (ofList (L ++ nL fl Ξ)) S q) :
+    ∀ L', Ext (ofList L) (ofList L') → (∀ s, s ∈ S → suppF L' (un s)) → suppF L' (un q) := by
+  induction d with
+  | ref h => intro L' _ hS; exact hS _ h
+  | app x hx _ ih =>
+    intro L' hLL' hS
+    cases List.mem_append.mp hx with
+    | inl hl =>
+      -- regla de L
+      have hx' := hL x hl
+      rw [hx'.1]
+      show Deriv (ofList L') [] x.concl
+      refine Deriv.app x (hLL' x hl) (fun pq hpq => ?_)
+      rw [atomic_adequacyF]
+      intro L'' hL'' hT
+      have h : suppF L'' (un pq.2) := ih pq hpq L'' (Ext.trans hLL' hL'') (fun s hs => by
+        cases List.mem_append.mp hs with
+        | inl h1 =>
+          rw [(hx'.2 pq hpq).2 s h1]
+          exact hT s (List.mem_append.mpr (Or.inl h1))
+        | inr h2 => exact suppF_mono _ hL'' (hS s h2))
+      rw [(hx'.2 pq hpq).1] at h
+      exact h
+    | inr hn =>
+      -- regla de 𝒩
+      cases nL_inv hn with
+      | intro χ hχ =>
+        cases χ with
+        | atom _ => exact (mem_nil_false hχ.2).elim
+        | bot => exact (mem_nil_false hχ.2).elim
+        | or _ _ => exact (mem_nil_false hχ.2).elim
+        | and a b =>
+          have ha : a ∈ Ξ := hcl _ hχ.1 a (sub_l rfl)
+          have hb : b ∈ Ξ := hcl _ hχ.1 b (sub_r rfl)
+          have hab : un (fl (.and a b)) = .and a b := hun _ hχ.1
+          cases List.mem_cons.mp hχ.2 with
+          | inl e =>
+            subst e
+            have h1 : suppF L' (un (fl a)) := ih ([], fl a) mem0 L' hLL' (fun s hs => hS s hs)
+            have h2 : suppF L' (un (fl b)) := ih ([], fl b) mem1 L' hLL' (fun s hs => hS s hs)
+            rw [hun a ha] at h1
+            rw [hun b hb] at h2
+            show suppF L' (un (fl (.and a b)))
+            rw [hab]
+            exact ⟨h1, h2⟩
+          | inr h' =>
+            cases List.mem_cons.mp h' with
+            | inl e =>
+              subst e
+              have h : suppF L' (un (fl (.and a b))) :=
+                ih ([], fl (.and a b)) mem0 L' hLL' (fun s hs => hS s hs)
+              rw [hab] at h
+              show suppF L' (un (fl a))
+              rw [hun a ha]
+              exact And.left h
+            | inr h'' =>
+              cases List.mem_cons.mp h'' with
+              | inl e =>
+                subst e
+                have h : suppF L' (un (fl (.and a b))) :=
+                  ih ([], fl (.and a b)) mem0 L' hLL' (fun s hs => hS s hs)
+                rw [hab] at h
+                show suppF L' (un (fl b))
+                rw [hun b hb]
+                exact And.right h
+              | inr h3 => exact (mem_nil_false h3).elim
+        | imp a b =>
+          have ha : a ∈ Ξ := hcl _ hχ.1 a (sub_l rfl)
+          have hb : b ∈ Ξ := hcl _ hχ.1 b (sub_r rfl)
+          have hab : un (fl (.imp a b)) = .imp a b := hun _ hχ.1
+          cases List.mem_cons.mp hχ.2 with
+          | inl e =>
+            subst e
+            show suppF L' (un (fl (.imp a b)))
+            rw [hab]
+            intro L'' hL'' haL
+            have h : suppF L'' (un (fl b)) :=
+              ih ([fl a], fl b) mem0 L'' (Ext.trans hLL' hL'') (fun s hs => by
+                cases List.mem_cons.mp hs with
+                | inl e' => subst e'; rw [hun a ha]; exact haL
+                | inr h' => exact suppF_mono _ hL'' (hS s h'))
+            rw [hun b hb] at h
+            exact h
+          | inr h' =>
+            cases List.mem_cons.mp h' with
+            | inl e =>
+              subst e
+              have h1 : suppF L' (un (fl (.imp a b))) :=
+                ih ([], fl (.imp a b)) mem0 L' hLL' (fun s hs => hS s hs)
+              have h2 : suppF L' (un (fl a)) := ih ([], fl a) mem1 L' hLL' (fun s hs => hS s hs)
+              rw [hab] at h1
+              rw [hun a ha] at h2
+              show suppF L' (un (fl b))
+              rw [hun b hb]
+              exact h1 L' (Ext.refl _) h2
+            | inr h'' => exact (mem_nil_false h'').elim
+
+-- L ∪ 𝒩 ⊢ χ♭ ⟹ L ⊩ χ
+theorem ssim_nil {fl : Form → Atom} {un : Atom → Form} {Ξ : List Form} (hcl : Closed Ξ)
+    (hun : ∀ χ, χ ∈ Ξ → un (fl χ) = χ) {L : List Rule}
+    (hL : ∀ x, x ∈ L → un x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → un pq.2 = .atom pq.2 ∧ ∀ t, t ∈ pq.1 → un t = .atom t)
+    {χ : Form} (hχ : χ ∈ Ξ) (d : Deriv (ofList (L ++ nL fl Ξ)) [] (fl χ)) : suppF L χ := by
+  have h := ssim hcl hun hL d L (Ext.refl _) (fun s hs => (mem_nil_false hs).elim)
+  rw [hun χ hχ] at h
+  exact h
+
+-- L ∪ 𝒩, α♭ ⊢ β♭ ⟹ L ⊩ α → β
+theorem ssim_imp {fl : Form → Atom} {un : Atom → Form} {Ξ : List Form} (hcl : Closed Ξ)
+    (hun : ∀ χ, χ ∈ Ξ → un (fl χ) = χ) {L : List Rule}
+    (hL : ∀ x, x ∈ L → un x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → un pq.2 = .atom pq.2 ∧ ∀ t, t ∈ pq.1 → un t = .atom t)
+    {α β : Form} (hα : α ∈ Ξ) (hβ : β ∈ Ξ)
+    (d : Deriv (ofList (L ++ nL fl Ξ)) [fl α] (fl β)) : suppF L (.imp α β) := by
+  intro L' hLL' hαL
+  have h := ssim hcl hun hL d L' hLL' (fun s hs => by
+    cases List.mem_cons.mp hs with
+    | inl e => rw [e, hun α hα]; exact hαL
+    | inr h' => exact (mem_nil_false h').elim)
+  rw [hun β hβ] at h
+  exact h
+
+/-! ## Conjetura inquisitiva, II: forma normal semántica
+  Toda φ soporta, base a base, lo mismo que alguna αᵢ de una lista sin ∨ ni ⊥.
+  ∨: átomo fresco sobre los nombres αᵢ♭. →: ssim_imp con el hecho α♭.
+  Consecuencias: propiedad de disyunción en cada base, H para Harrop, y la validez
+  reducida a NJ sobre fórmulas sin ∨ ni ⊥. -/
+
+-- cotas de átomos
+theorem idx_le (Ξ : List Form) (χ : Form) : idx Ξ χ ≤ Ξ.length := by
+  induction Ξ with
+  | nil => exact Nat.le_refl 0
+  | cons θ Ξ ih =>
+    by_cases e : θ = χ
+    · rw [idx, ite_eq_left e]; exact Nat.zero_le _
+    · rw [idx, ite_eq_right e]; exact Nat.succ_le_succ ih
+
+theorem flat_le {M : Nat} {Ξ : List Form} (hM : ∀ p, Form.atom p ∈ Ξ → p ≤ M) (χ : Form)
+    (hχ : χ ∈ Ξ) : flat M Ξ χ ≤ M + 1 + Ξ.length := by
+  cases χ with
+  | atom p =>
+    exact Nat.le_trans (hM p hχ) (Nat.le_trans (Nat.le_add_right M 1) (Nat.le_add_right _ _))
+  | bot => exact Nat.add_le_add_left (idx_le Ξ _) _
+  | and a b => exact Nat.add_le_add_left (idx_le Ξ _) _
+  | or a b => exact Nat.add_le_add_left (idx_le Ξ _) _
+  | imp a b => exact Nat.add_le_add_left (idx_le Ξ _) _
+
+theorem unflat_le {M : Nat} {Ξ : List Form} {a : Atom} (h : a ≤ M) :
+    unflat M Ξ a = .atom a := by
+  unfold unflat
+  rw [ite_eq_right (Nat.not_lt.mpr h)]
+
+theorem atoms_le_lbound {L : List Rule} {x : Rule} (hx : x ∈ L) :
+    x.concl ≤ lbound L ∧
+      ∀ pq, pq ∈ x.prems → pq.2 ≤ lbound L ∧ ∀ t, t ∈ pq.1 → t ≤ lbound L := by
+  have hx' : rbound x ≤ lbound L := le_lbound L hx
+  have hc : x.concl ≤ rbound x := Nat.le_add_right _ _
+  refine ⟨Nat.le_trans hc hx', fun pq hpq => ?_⟩
+  have hp : pq.2 + sumN pq.1 ≤ rbound x :=
+    Nat.le_trans (le_pbound x.prems hpq) (Nat.le_add_left _ _)
+  have h1 : pq.2 ≤ rbound x := Nat.le_trans (Nat.le_add_right _ _) hp
+  refine ⟨Nat.le_trans h1 hx', fun t ht => ?_⟩
+  have h2 : t ≤ rbound x :=
+    Nat.le_trans (le_sumN pq.1 ht) (Nat.le_trans (Nat.le_add_left _ _) hp)
+  exact Nat.le_trans h2 hx'
+
+-- los átomos de L quedan fijos bajo ♮
+theorem unflat_rules {L : List Rule} {M : Nat} {Ξ : List Form} (hM : lbound L ≤ M) :
+    ∀ x, x ∈ L → unflat M Ξ x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → unflat M Ξ pq.2 = .atom pq.2 ∧
+        ∀ t, t ∈ pq.1 → unflat M Ξ t = .atom t := by
+  intro x hx
+  have h := atoms_le_lbound hx
+  exact ⟨unflat_le (Nat.le_trans h.1 hM), fun pq hpq =>
+    ⟨unflat_le (Nat.le_trans (h.2 pq hpq).1 hM),
+     fun t ht => unflat_le (Nat.le_trans ((h.2 pq hpq).2 t ht) hM)⟩⟩
+
+-- disyunción de nombres: alguna se soporta (átomo fresco r, reglas α♭ ⇒ r)
+theorem fresh_choice_aux {fl : Form → Atom} {un : Atom → Form} {Ξ : List Form}
+    (hfl : ∀ p, fl (.atom p) = p) (hcl : Closed Ξ) (hnv : ∀ χ, χ ∈ Ξ → nvb χ)
+    (hun : ∀ χ, χ ∈ Ξ → un (fl χ) = χ) {L : List Rule}
+    (hL : ∀ x, x ∈ L → un x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → un pq.2 = .atom pq.2 ∧ ∀ t, t ∈ pq.1 → un t = .atom t)
+    {A : List Form} (hAΞ : ∀ α, α ∈ A → α ∈ Ξ) {r : Atom}
+    (hfr : ∀ x, x ∈ L ++ nL fl Ξ → x.concl ≠ r ∧ ∀ pq, pq ∈ x.prems → pq.2 ≠ r ∧ r ∉ pq.1)
+    (hrA : ∀ α, α ∈ A → fl α ≠ r)
+    (h : ∀ L', Ext (ofList L) (ofList L') → ∀ p : Atom,
+      (∀ L'', Ext (ofList L') (ofList L'') → (∃ α, α ∈ A ∧ suppF L'' α) →
+        Deriv (ofList L'') [] p) → Deriv (ofList L') [] p) :
+    ∃ α, α ∈ A ∧ suppF L α := by
+  have hE : ∀ e, e ∈ A.map (fun α => (⟨[([], fl α)], r⟩ : Rule)) → e.concl = r := by
+    intro e he
+    cases List.mem_map.mp he with
+    | intro α hα =>
+      cases hα with
+      | intro _ e' => subst e'; rfl
+  have hext : Ext (ofList L)
+      (ofList ((L ++ nL fl Ξ) ++ A.map (fun α => (⟨[([], fl α)], r⟩ : Rule)))) :=
+    fun _ hx => List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inl hx)))
+  have d := h _ hext r (fun L'' hL'' hex => by
+    cases hex with
+    | intro α hα =>
+      have hNL : Ext (ofList (nL fl Ξ)) (ofList L'') := fun x hx =>
+        hL'' x (List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inr hx))))
+      have hd := (daggerF hfl hcl hnv α (hAΞ α hα.1) hNL).mp hα.2
+      exact Deriv.app1 (hL'' ⟨[([], fl α)], r⟩
+        (List.mem_append.mpr (Or.inr (List.mem_map.mpr ⟨α, hα.1, rfl⟩)))) hd)
+  cases last_fresh hfr d (fun h' => mem_nil_false h') rfl with
+  | intro e he =>
+    cases List.mem_map.mp he.1 with
+    | intro α hα =>
+      cases hα with
+      | intro hαA e' =>
+        subst e'
+        have d1 : Deriv (ofList ((L ++ nL fl Ξ) ++ A.map (fun α => (⟨[([], fl α)], r⟩ : Rule))))
+            [] (fl α) := he.2 ([], fl α) mem0
+        exact ⟨α, hαA, ssim_nil hcl hun hL (hAΞ α hαA)
+          (deriv_fresh hfr hE d1 (fun h' => mem_nil_false h') (hrA α hαA))⟩
+
+theorem fresh_choice {L : List Rule} {A : List Form} (hA : ∀ α, α ∈ A → nvb α)
+    (h : ∀ L', Ext (ofList L) (ofList L') → ∀ p : Atom,
+      (∀ L'', Ext (ofList L') (ofList L'') → (∃ α, α ∈ A ∧ suppF L'' α) →
+        Deriv (ofList L'') [] p) → Deriv (ofList L') [] p) :
+    ∃ α, α ∈ A ∧ suppF L α := by
+  have hMΞ : ∀ p, Form.atom p ∈ subsL A → p ≤ lbound L + sumAtL A :=
+    fun p hp => Nat.le_trans (atom_le_sumAtL p A hp) (Nat.le_add_left _ _)
+  have hfr := fresh_of_gt (L := L ++ nL (flat (lbound L + sumAtL A) (subsL A)) (subsL A))
+    (r := lbound (L ++ nL (flat (lbound L + sumAtL A) (subsL A)) (subsL A)) +
+      (lbound L + sumAtL A + 1 + (subsL A).length) + 1)
+    (Nat.lt_succ_of_le (Nat.le_add_right _ _))
+  exact fresh_choice_aux (fl := flat (lbound L + sumAtL A) (subsL A)) (Ξ := subsL A) (L := L)
+    (fun _ => rfl) (subsL_closed A) (nvb_subsL A hA) (unflat_flat hMΞ)
+    (unflat_rules (Nat.le_add_right _ _)) (fun α hα => mem_subsL_of A hα) hfr
+    (fun α hα => Nat.ne_of_lt (Nat.lt_succ_of_le
+      (Nat.le_trans (flat_le hMΞ α (mem_subsL_of A hα)) (Nat.le_add_left _ _))))
+    h
+
+-- α → ⋁B: algún β con ⊩ α → β (hecho α♭ y ssim_imp)
+theorem imp_choice_aux {fl : Form → Atom} {un : Atom → Form} {Ξ : List Form}
+    (hfl : ∀ p, fl (.atom p) = p) (hcl : Closed Ξ) (hnv : ∀ χ, χ ∈ Ξ → nvb χ)
+    (hun : ∀ χ, χ ∈ Ξ → un (fl χ) = χ) {L : List Rule}
+    (hL : ∀ x, x ∈ L → un x.concl = .atom x.concl ∧
+      ∀ pq, pq ∈ x.prems → un pq.2 = .atom pq.2 ∧ ∀ t, t ∈ pq.1 → un t = .atom t)
+    {α : Form} {B : List Form} (hαΞ : α ∈ Ξ) (hBΞ : ∀ β, β ∈ B → β ∈ Ξ)
+    (h : ∀ L', Ext (ofList L) (ofList L') → suppF L' α → ∃ β, β ∈ B ∧ suppF L' β) :
+    ∃ β, β ∈ B ∧ suppF L (.imp α β) := by
+  have hext : Ext (ofList L) (ofList ((L ++ nL fl Ξ) ++ factsL [fl α])) :=
+    fun _ hx => List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inl hx)))
+  have hNL : Ext (ofList (nL fl Ξ)) (ofList ((L ++ nL fl Ξ) ++ factsL [fl α])) :=
+    fun _ hx => List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inr hx)))
+  have hα1 : suppF ((L ++ nL fl Ξ) ++ factsL [fl α]) α :=
+    (daggerF hfl hcl hnv α hαΞ hNL).mpr
+      (Deriv.app ⟨[], fl α⟩ (List.mem_append.mpr (Or.inr mem0))
+        (fun _ h' => (mem_nil_false h').elim))
+  cases h _ hext hα1 with
+  | intro β hβ =>
+    have d : Deriv (ofList ((L ++ nL fl Ξ) ++ factsL [fl α])) [] (fl β) :=
+      (daggerF hfl hcl hnv β (hBΞ β hβ.1) hNL).mp hβ.2
+    have d' : Deriv (ofList (L ++ nL fl Ξ)) [fl α] (fl β) :=
+      Deriv.facts_to_ctx (Deriv.mono (ext_factsL₁ (L ++ nL fl Ξ) [fl α]) d)
+    exact ⟨β, hβ.1, ssim_imp hcl hun hL hαΞ (hBΞ β hβ.1) d'⟩
+
+theorem imp_choice {L : List Rule} {α : Form} {B : List Form} (hα : nvb α)
+    (hB : ∀ β, β ∈ B → nvb β)
+    (h : ∀ L', Ext (ofList L) (ofList L') → suppF L' α → ∃ β, β ∈ B ∧ suppF L' β) :
+    ∃ β, β ∈ B ∧ suppF L (.imp α β) := by
+  have hall : ∀ θ, θ ∈ α :: B → nvb θ := fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => rw [e]; exact hα
+    | inr h' => exact hB θ h'
+  have hMΞ : ∀ p, Form.atom p ∈ subsL (α :: B) → p ≤ lbound L + sumAtL (α :: B) :=
+    fun p hp => Nat.le_trans (atom_le_sumAtL p _ hp) (Nat.le_add_left _ _)
+  exact imp_choice_aux (fl := flat (lbound L + sumAtL (α :: B)) (subsL (α :: B)))
+    (Ξ := subsL (α :: B)) (L := L)
+    (fun _ => rfl) (subsL_closed _) (nvb_subsL _ hall) (unflat_flat hMΞ)
+    (unflat_rules (Nat.le_add_right _ _)) (mem_subsL_of _ mem0)
+    (fun β hβ => mem_subsL_of _ (List.mem_cons.mpr (Or.inr hβ))) h
+
+-- combinadores de listas
+def topF : Form := .imp (.atom 0) (.atom 0)
+
+theorem supp_top (L : List Rule) : suppF L topF := fun _ _ h => h
+
+theorem nvb_top : nvb topF := ⟨True.intro, True.intro⟩
+
+def andL : List Form → List Form → List Form
+  | [],     _ => []
+  | x :: X, Y => Y.map (fun y => .and x y) ++ andL X Y
+
+theorem andL_nvb {X Y : List Form} (hX : ∀ x, x ∈ X → nvb x) (hY : ∀ y, y ∈ Y → nvb y) :
+    ∀ γ, γ ∈ andL X Y → nvb γ := by
+  induction X with
+  | nil => intro γ h; exact (mem_nil_false h).elim
+  | cons x X ih =>
+    intro γ h
+    cases List.mem_append.mp h with
+    | inl h1 =>
+      cases List.mem_map.mp h1 with
+      | intro y hy =>
+        cases hy with
+        | intro hyY e => subst e; exact ⟨hX x mem0, hY y hyY⟩
+    | inr h2 => exact ih (fun x' hx' => hX x' (List.mem_cons.mpr (Or.inr hx'))) γ h2
+
+theorem andL_supp {L : List Rule} (X Y : List Form) :
+    (∃ γ, γ ∈ andL X Y ∧ suppF L γ) ↔
+      (∃ x, x ∈ X ∧ suppF L x) ∧ (∃ y, y ∈ Y ∧ suppF L y) := by
+  induction X with
+  | nil =>
+    constructor
+    · intro h
+      cases h with
+      | intro γ hγ => exact (mem_nil_false hγ.1).elim
+    · intro h
+      cases h.1 with
+      | intro x hx => exact (mem_nil_false hx.1).elim
+  | cons x X ih =>
+    constructor
+    · intro h
+      cases h with
+      | intro γ hγ =>
+        cases List.mem_append.mp hγ.1 with
+        | inl h1 =>
+          cases List.mem_map.mp h1 with
+          | intro y hy =>
+            cases hy with
+            | intro hyY e =>
+              subst e
+              have hs : suppF L (.and x y) := hγ.2
+              exact ⟨⟨x, mem0, And.left hs⟩, ⟨y, hyY, And.right hs⟩⟩
+        | inr h2 =>
+          cases ih.mp ⟨γ, h2, hγ.2⟩ with
+          | intro hx hy =>
+            cases hx with
+            | intro x' hx' => exact ⟨⟨x', List.mem_cons.mpr (Or.inr hx'.1), hx'.2⟩, hy⟩
+    · intro h
+      cases h with
+      | intro hx hy =>
+        cases hx with
+        | intro x' hx' =>
+          cases hy with
+          | intro y hy' =>
+            cases List.mem_cons.mp hx'.1 with
+            | inl e =>
+              have hsx : suppF L x := by rw [← e]; exact hx'.2
+              have hs : suppF L (.and x y) := ⟨hsx, hy'.2⟩
+              exact ⟨.and x y, List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨y, hy'.1, rfl⟩)), hs⟩
+            | inr h' =>
+              cases ih.mpr ⟨⟨x', h', hx'.2⟩, ⟨y, hy'.1, hy'.2⟩⟩ with
+              | intro γ hγ => exact ⟨γ, List.mem_append.mpr (Or.inr hγ.1), hγ.2⟩
+
+theorem andL_len {X Y : List Form} (hX : X.length ≤ 1) (hY : Y.length ≤ 1) :
+    (andL X Y).length ≤ 1 := by
+  cases X with
+  | nil => exact Nat.zero_le _
+  | cons x X' =>
+    cases X' with
+    | nil =>
+      show (Y.map (fun y => Form.and x y) ++ []).length ≤ 1
+      rw [List.append_nil, List.length_map]
+      exact hY
+    | cons _ X'' => exact absurd (Nat.le_of_succ_le_succ hX) (Nat.not_succ_le_zero _)
+
+-- ⋀ᵢ (aᵢ → b_{f i}), f elección
+def impNF (B : List Form) : List Form → List Form
+  | []     => [topF]
+  | a :: A => andL (B.map (fun b => .imp a b)) (impNF B A)
+
+theorem impNF_nvb {A B : List Form} (hA : ∀ a, a ∈ A → nvb a) (hB : ∀ b, b ∈ B → nvb b) :
+    ∀ γ, γ ∈ impNF B A → nvb γ := by
+  induction A with
+  | nil =>
+    intro γ h
+    cases List.mem_cons.mp h with
+    | inl e => rw [e]; exact nvb_top
+    | inr h' => exact (mem_nil_false h').elim
+  | cons a A ih =>
+    intro γ h
+    exact andL_nvb (fun x hx => by
+        cases List.mem_map.mp hx with
+        | intro b hb =>
+          cases hb with
+          | intro hbB e => subst e; exact ⟨hA a mem0, hB b hbB⟩)
+      (ih (fun a' ha' => hA a' (List.mem_cons.mpr (Or.inr ha')))) γ h
+
+theorem impNF_supp {L : List Rule} (B A : List Form) :
+    (∃ γ, γ ∈ impNF B A ∧ suppF L γ) ↔ ∀ a, a ∈ A → ∃ b, b ∈ B ∧ suppF L (.imp a b) := by
+  induction A with
+  | nil =>
+    constructor
+    · intro _ a ha; exact (mem_nil_false ha).elim
+    · intro _; exact ⟨topF, mem0, supp_top L⟩
+  | cons a A ih =>
+    show (∃ γ, γ ∈ andL (B.map (fun b => .imp a b)) (impNF B A) ∧ suppF L γ) ↔ _
+    rw [andL_supp]
+    constructor
+    · intro h a' ha'
+      cases List.mem_cons.mp ha' with
+      | inl e =>
+        rw [e]
+        cases h.1 with
+        | intro x hx =>
+          cases List.mem_map.mp hx.1 with
+          | intro b hb =>
+            cases hb with
+            | intro hbB e' => subst e'; exact ⟨b, hbB, hx.2⟩
+      | inr h' => exact (ih.mp h.2) a' h'
+    · intro h
+      constructor
+      · cases h a mem0 with
+        | intro b hb => exact ⟨.imp a b, List.mem_map.mpr ⟨b, hb.1, rfl⟩, hb.2⟩
+      · exact ih.mpr (fun a' ha' => h a' (List.mem_cons.mpr (Or.inr ha')))
+
+theorem impNF_len {B : List Form} (hB : B.length ≤ 1) (A : List Form) :
+    (impNF B A).length ≤ 1 := by
+  induction A with
+  | nil => exact Nat.le_refl _
+  | cons a A ih =>
+    exact andL_len (by rw [List.length_map]; exact hB) ih
+
+-- ∨I en la clase finita
+theorem or_introF₁ {L : List Rule} {φ : Form} (ψ : Form) (h : suppF L φ) :
+    suppF L (.or φ ψ) :=
+  fun L' hLL' _ k₁ _ => k₁ L' (Ext.refl _) (suppF_mono φ hLL' h)
+
+theorem or_introF₂ {L : List Rule} (φ : Form) {ψ : Form} (h : suppF L ψ) :
+    suppF L (.or φ ψ) :=
+  fun L' hLL' _ _ k₂ => k₂ L' (Ext.refl _) (suppF_mono ψ hLL' h)
+
+-- paso de ∨
+theorem or_choice {L : List Rule} {φ ψ : Form} {Aφ Aψ : List Form}
+    (hnφ : ∀ α, α ∈ Aφ → nvb α) (hnψ : ∀ α, α ∈ Aψ → nvb α)
+    (hφ : ∀ L₀, suppF L₀ φ ↔ ∃ α, α ∈ Aφ ∧ suppF L₀ α)
+    (hψ : ∀ L₀, suppF L₀ ψ ↔ ∃ α, α ∈ Aψ ∧ suppF L₀ α)
+    (h : suppF L (.or φ ψ)) : ∃ α, α ∈ Aφ ++ Aψ ∧ suppF L α := by
+  refine fresh_choice (A := Aφ ++ Aψ)
+    (fun α hα => (List.mem_append.mp hα).elim (hnφ α) (hnψ α)) ?_
+  intro L' hLL' p k
+  exact h L' hLL' p
+    (fun L'' hL'' hφ'' => k L'' hL'' (by
+      cases (hφ L'').mp hφ'' with
+      | intro α hα => exact ⟨α, List.mem_append.mpr (Or.inl hα.1), hα.2⟩))
+    (fun L'' hL'' hψ'' => k L'' hL'' (by
+      cases (hψ L'').mp hψ'' with
+      | intro α hα => exact ⟨α, List.mem_append.mpr (Or.inr hα.1), hα.2⟩))
+
+-- forma normal semántica
+theorem nf_exists (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → nvb α) ∧
+    (harrop φ → A.length ≤ 1) ∧ ∀ L, suppF L φ ↔ ∃ α, α ∈ A ∧ suppF L α := by
+  induction φ with
+  | atom p =>
+    refine ⟨[.atom p], fun α hα => ?_, fun _ => Nat.le_refl _,
+      fun L => ⟨fun h => ⟨.atom p, mem0, h⟩, fun h => ?_⟩⟩
+    · cases List.mem_cons.mp hα with
+      | inl e => rw [e]; exact True.intro
+      | inr h' => exact (mem_nil_false h').elim
+    · cases h with
+      | intro α hα =>
+        cases List.mem_cons.mp hα.1 with
+        | inl e => rw [e] at hα; exact hα.2
+        | inr h' => exact (mem_nil_false h').elim
+  | bot =>
+    refine ⟨[], fun α hα => (mem_nil_false hα).elim, fun _ => Nat.zero_le _,
+      fun L => ⟨fun h => (finite_bot L h).elim, fun h => ?_⟩⟩
+    cases h with
+    | intro α hα => exact (mem_nil_false hα.1).elim
+  | and φ ψ ihφ ihψ =>
+    cases ihφ with
+    | intro Aφ hAφ =>
+      cases ihψ with
+      | intro Aψ hAψ =>
+        refine ⟨andL Aφ Aψ, andL_nvb hAφ.1 hAψ.1,
+          fun h => andL_len (hAφ.2.1 (And.left h)) (hAψ.2.1 (And.right h)), fun L => ?_⟩
+        rw [andL_supp]
+        show suppF L φ ∧ suppF L ψ ↔ _
+        rw [hAφ.2.2 L, hAψ.2.2 L]
+  | or φ ψ ihφ ihψ =>
+    cases ihφ with
+    | intro Aφ hAφ =>
+      cases ihψ with
+      | intro Aψ hAψ =>
+        refine ⟨Aφ ++ Aψ, fun α hα => (List.mem_append.mp hα).elim (hAφ.1 α) (hAψ.1 α),
+          fun h => False.elim h,
+          fun L => ⟨fun h => or_choice hAφ.1 hAψ.1 hAφ.2.2 hAψ.2.2 h, fun h => ?_⟩⟩
+        cases h with
+        | intro α hα =>
+          cases List.mem_append.mp hα.1 with
+          | inl h1 => exact or_introF₁ ψ ((hAφ.2.2 L).mpr ⟨α, h1, hα.2⟩)
+          | inr h2 => exact or_introF₂ φ ((hAψ.2.2 L).mpr ⟨α, h2, hα.2⟩)
+  | imp φ ψ ihφ ihψ =>
+    cases ihφ with
+    | intro Aφ hAφ =>
+      cases ihψ with
+      | intro Aψ hAψ =>
+        refine ⟨impNF Aψ Aφ, impNF_nvb hAφ.1 hAψ.1, fun h => impNF_len (hAψ.2.1 h) Aφ,
+          fun L => ?_⟩
+        rw [impNF_supp]
+        constructor
+        · intro h a ha
+          apply imp_choice (hAφ.1 a ha) hAψ.1
+          intro L' hLL' haL
+          apply (hAψ.2.2 L').mp
+          exact h L' hLL' ((hAφ.2.2 L').mpr ⟨a, ha, haL⟩)
+        · intro h L' hLL' hφL
+          cases (hAφ.2.2 L').mp hφL with
+          | intro a ha =>
+            cases h a ha.1 with
+            | intro b hb => exact (hAψ.2.2 L').mpr ⟨b, hb.1, hb.2 L' hLL' ha.2⟩
+
+-- propiedad de disyunción en cada base finita (GDP)
+theorem finite_gdp {L : List Rule} {φ ψ : Form} (h : suppF L (.or φ ψ)) :
+    suppF L φ ∨ suppF L ψ := by
+  cases nf_exists φ with
+  | intro Aφ hAφ =>
+    cases nf_exists ψ with
+    | intro Aψ hAψ =>
+      cases or_choice hAφ.1 hAψ.1 hAφ.2.2 hAψ.2.2 h with
+      | intro α hα =>
+        cases List.mem_append.mp hα.1 with
+        | inl h1 => exact Or.inl ((hAφ.2.2 L).mpr ⟨α, h1, hα.2⟩)
+        | inr h2 => exact Or.inr ((hAψ.2.2 L).mpr ⟨α, h2, hα.2⟩)
+
+theorem valid_of_nil {φ : Form} (h : suppF [] φ) : validF [] φ :=
+  fun _ _ => suppF_mono φ (fun _ hx => (mem_nil_false hx).elim) h
+
+-- propiedad de disyunción de la lógica
+theorem finite_dp {φ ψ : Form} (h : validF [] (.or φ ψ)) : validF [] φ ∨ validF [] ψ :=
+  (finite_gdp (h [] (fun _ hθ => (mem_nil_false hθ).elim))).elim
+    (fun h1 => Or.inl (valid_of_nil h1)) (fun h2 => Or.inr (valid_of_nil h2))
+
+-- H: (α → φ ∨ ψ) → (α → φ) ∨ (α → ψ), α de Harrop
+theorem finite_H (α φ ψ : Form) (hα : harrop α) :
+    validF [] (.imp (.imp α (.or φ ψ)) (.or (.imp α φ) (.imp α ψ))) := by
+  intro L _ L' _ h
+  cases nf_exists α with
+  | intro Aα hAα =>
+    cases nf_exists φ with
+    | intro Aφ hAφ =>
+      cases nf_exists ψ with
+      | intro Aψ hAψ =>
+        have hlen := hAα.2.1 hα
+        cases Aα with
+        | nil =>
+          -- α no se soporta nunca
+          apply or_introF₁
+          intro L'' _ hαL
+          cases (hAα.2.2 L'').mp hαL with
+          | intro a ha => exact (mem_nil_false ha.1).elim
+        | cons a rest =>
+          cases rest with
+          | cons _ _ => exact absurd (Nat.le_of_succ_le_succ hlen) (Nat.not_succ_le_zero _)
+          | nil =>
+            have hk : ∃ β, β ∈ Aφ ++ Aψ ∧ suppF L' (.imp a β) := by
+              apply imp_choice (hAα.1 a mem0)
+                (fun β hβ => (List.mem_append.mp hβ).elim (hAφ.1 β) (hAψ.1 β))
+              intro L'' hL'' haL
+              have hαL : suppF L'' α := (hAα.2.2 L'').mpr ⟨a, mem0, haL⟩
+              exact or_choice hAφ.1 hAψ.1 hAφ.2.2 hAψ.2.2 (h L'' hL'' hαL)
+            cases hk with
+            | intro β hβ =>
+              cases List.mem_append.mp hβ.1 with
+              | inl h1 =>
+                apply or_introF₁
+                intro L'' hL'' hαL
+                cases (hAα.2.2 L'').mp hαL with
+                | intro a' ha' =>
+                  cases List.mem_cons.mp ha'.1 with
+                  | inl e =>
+                    rw [e] at ha'
+                    exact (hAφ.2.2 L'').mpr ⟨β, h1, hβ.2 L'' hL'' ha'.2⟩
+                  | inr h' => exact (mem_nil_false h').elim
+              | inr h2 =>
+                apply or_introF₂
+                intro L'' hL'' hαL
+                cases (hAα.2.2 L'').mp hαL with
+                | intro a' ha' =>
+                  cases List.mem_cons.mp ha'.1 with
+                  | inl e =>
+                    rw [e] at ha'
+                    exact (hAψ.2.2 L'').mpr ⟨β, h2, hβ.2 L'' hL'' ha'.2⟩
+                  | inr h' => exact (mem_nil_false h').elim
+
+-- validez en la clase finita = algún disyunto normal es teorema de NJ
+theorem finite_valid_nf (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → nvb α) ∧
+    (validF [] φ ↔ ∃ α, α ∈ A ∧ NJ [] α) := by
+  cases nf_exists φ with
+  | intro A hA =>
+    refine ⟨A, hA.1, ⟨fun hv => ?_, fun h => ?_⟩⟩
+    · cases (hA.2.2 []).mp (hv [] (fun _ h => (mem_nil_false h).elim)) with
+      | intro α hα =>
+        exact ⟨α, hα.1, finite_complete_nvb (fun _ h => (mem_nil_false h).elim)
+          (hA.1 α hα.1) (valid_of_nil hα.2)⟩
+    · cases h with
+      | intro α hα =>
+        exact valid_of_nil ((hA.2.2 []).mpr
+          ⟨α, hα.1, soundnessF hα.2 [] (fun _ h => (mem_nil_false h).elim)⟩)
+
 end BeS

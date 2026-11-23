@@ -406,6 +406,70 @@ theorem export_atom (B : Base) (Sig : List Rule) (p : Atom) :
     simp only [supp] at this
     exact this
 
+/-! ## Exportación general (Σ finito) -/
+
+theorem Adm.mono {C D : Base} (h : Ext C D) {r : Rule} (ha : Adm C r) : Adm D r :=
+  fun E hDE hP => ha E (Ext.trans h hDE) hP
+
+theorem Ext.union {C D S : Base} (h : Ext C D) : Ext (bunion C S) (bunion D S) :=
+  fun r hr => Or.elim hr (fun h' => Or.inl (h r h')) Or.inr
+
+-- Σ admisible en C ⟹ (⊩_{C ∪ Σ} ψ → ⊩_C ψ)
+theorem supp_elim_adm {Sig : List Rule} (ψ : Form) : ∀ {C : Base},
+    (∀ r, r ∈ Sig → Adm C r) → supp (bunion C (ofList Sig)) ψ → supp C ψ := by
+  induction ψ with
+  | atom p =>
+    intro C hA h
+    simp only [supp] at h ⊢
+    exact Deriv.elim_adm (Ext.refl C) hA h
+  | bot =>
+    intro C hA h
+    simp only [supp] at h ⊢
+    exact fun q => Deriv.elim_adm (Ext.refl C) hA (h q)
+  | and φ ψ ih₁ ih₂ =>
+    intro C hA h
+    simp only [supp] at h ⊢
+    exact ⟨ih₁ hA h.1, ih₂ hA h.2⟩
+  | imp φ ψ _ ih₂ =>
+    intro C hA h
+    simp only [supp] at h ⊢
+    intro D hCD hφ
+    have hA' : ∀ r, r ∈ Sig → Adm D r := fun r hr => Adm.mono hCD (hA r hr)
+    exact ih₂ hA' (h (bunion D (ofList Sig)) (Ext.union hCD)
+      (supp_mono φ (fun _ h' => Or.inl h') hφ))
+  | or φ ψ _ _ =>
+    intro C hA h
+    simp only [supp] at h ⊢
+    intro D hCD p k₁ k₂
+    have hA' : ∀ r, r ∈ Sig → Adm D r := fun r hr => Adm.mono hCD (hA r hr)
+    have hp := h (bunion D (ofList Sig)) (Ext.union hCD) p
+      (fun E hE hφ => k₁ E (Ext.trans (fun _ h' => Or.inl h') hE) hφ)
+      (fun E hE hψ => k₂ E (Ext.trans (fun _ h' => Or.inl h') hE) hψ)
+    exact Deriv.elim_adm (Ext.refl D) hA' hp
+
+-- ⊩_{B ∪ Σ} χ ⟺ ⊩_B Σ* → χ, para toda χ
+theorem export_all (B : Base) (Sig : List Rule) (χ : Form) :
+    supp (bunion B (ofList Sig)) χ ↔ supp B (impF (Sig.map ruleForm) χ) := by
+  rw [supp_impF]
+  constructor
+  · intro h C hBC hS
+    have hA : ∀ r, r ∈ Sig → Adm C r :=
+      fun r hr => (supp_rule r).mp (hS _ (List.mem_map.mpr ⟨r, hr, rfl⟩))
+    exact supp_elim_adm χ hA (supp_mono χ (Ext.union hBC) h)
+  · intro h
+    exact h (bunion B (ofList Sig)) (fun _ hr => Or.inl hr) (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro r hr =>
+        cases hr with
+        | intro hm e =>
+          subst e
+          apply (supp_rule r).mpr
+          intro D hD hP
+          exact Deriv.app r (hD r (Or.inr hm)) (fun pq hpq => by
+            rw [List.append_nil]; exact hP pq hpq))
+
+abbrev emptyB : Base := fun _ => False
+
 /-! ## Inferones -/
 
 -- ⟨⟨P, 𝒫, b⟩⟩; polaridad codificada en el átomo
@@ -428,5 +492,17 @@ theorem inferon_definable (B : Base) (ι : Inferon) : suppInf B ι ↔ supp B ι
 -- plan: aplanamiento φ ↦ φ♭, base 𝒩, lemas puente
 theorem completeness {Γ : List Form} {φ : Form} : valid Γ φ → NJ Γ φ := by
   sorry
+
+/-! ## Bases finitas -/
+
+-- Σ finito: ⊩_Σ χ ⟺ ⊢_NJ Σ* → χ  (condicional: completeness)
+theorem finite_base_export (Sig : List Rule) (χ : Form) :
+    supp (bunion emptyB (ofList Sig)) χ ↔ NJ [] (impF (Sig.map ruleForm) χ) := by
+  rw [export_all]
+  constructor
+  · intro h
+    exact completeness (fun B _ => supp_mono _ (fun _ hr => False.elim hr) h)
+  · intro d
+    exact soundness d emptyB (fun _ hθ => by cases hθ)
 
 end BeS

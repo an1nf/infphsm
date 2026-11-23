@@ -1041,4 +1041,617 @@ theorem inferon_axiom (Γ : List IForm) (ι : Inferon) :
     ivalid Γ (.inf ι) ↔ NJ (Γ.map tr) (impF (ι.loc.map ruleForm) (.atom ι.a)) :=
   inferon_sound_complete Γ (.inf ι)
 
+/-! ## B-eS restringida: bases y extensiones finitas de reglas concretas -/
+
+def suppF : List Rule → Form → Prop
+  | L, .atom p  => Deriv (ofList L) [] p
+  | L, .bot     => ∀ p, Deriv (ofList L) [] p
+  | L, .and φ ψ => suppF L φ ∧ suppF L ψ
+  | L, .imp φ ψ => ∀ L', Ext (ofList L) (ofList L') → suppF L' φ → suppF L' ψ
+  | L, .or φ ψ  => ∀ L', Ext (ofList L) (ofList L') → ∀ p : Atom,
+      (∀ L'', Ext (ofList L') (ofList L'') → suppF L'' φ → Deriv (ofList L'') [] p) →
+      (∀ L'', Ext (ofList L') (ofList L'') → suppF L'' ψ → Deriv (ofList L'') [] p) →
+      Deriv (ofList L') [] p
+
+theorem suppF_mono (φ : Form) : ∀ {L L' : List Rule},
+    Ext (ofList L) (ofList L') → suppF L φ → suppF L' φ := by
+  induction φ with
+  | atom p => intro L L' h hs; simp only [suppF] at hs ⊢; exact Deriv.mono h hs
+  | bot => intro L L' h hs; simp only [suppF] at hs ⊢; exact fun q => Deriv.mono h (hs q)
+  | and φ ψ ih₁ ih₂ =>
+    intro L L' h hs; simp only [suppF] at hs ⊢; exact ⟨ih₁ h hs.1, ih₂ h hs.2⟩
+  | imp φ ψ _ _ =>
+    intro L L' h hs; simp only [suppF] at hs ⊢
+    exact fun D hCD => hs D (Ext.trans h hCD)
+  | or φ ψ _ _ =>
+    intro L L' h hs; simp only [suppF] at hs ⊢
+    exact fun D hCD => hs D (Ext.trans h hCD)
+
+theorem bot_elimF (χ : Form) : ∀ {L : List Rule}, suppF L .bot → suppF L χ := by
+  induction χ with
+  | atom p => intro L hb; simp only [suppF] at hb ⊢; exact hb p
+  | bot => intro L hb; exact hb
+  | and χ₁ χ₂ ih₁ ih₂ =>
+    intro L hb; simp only [suppF]; exact ⟨ih₁ hb, ih₂ hb⟩
+  | imp χ₁ χ₂ _ ih₂ =>
+    intro L hb; simp only [suppF]
+    intro C hBC _
+    exact ih₂ (suppF_mono .bot hBC hb)
+  | or χ₁ χ₂ _ _ =>
+    intro L hb; simp only [suppF]
+    intro C hBC p _ _
+    have hC := suppF_mono .bot hBC hb
+    simp only [suppF] at hC
+    exact hC p
+
+theorem or_elimF (φ ψ χ : Form) : ∀ {L : List Rule},
+    suppF L (.or φ ψ) →
+    (∀ C, Ext (ofList L) (ofList C) → suppF C φ → suppF C χ) →
+    (∀ C, Ext (ofList L) (ofList C) → suppF C ψ → suppF C χ) →
+    suppF L χ := by
+  induction χ with
+  | atom p =>
+    intro L hor h₁ h₂
+    simp only [suppF] at hor h₁ h₂ ⊢
+    exact hor L (Ext.refl _) p h₁ h₂
+  | bot =>
+    intro L hor h₁ h₂
+    simp only [suppF] at hor h₁ h₂ ⊢
+    intro q
+    exact hor L (Ext.refl _) q
+      (fun D hD hφ => h₁ D hD hφ q) (fun D hD hψ => h₂ D hD hψ q)
+  | and χ₁ χ₂ ih₁ ih₂ =>
+    intro L hor h₁ h₂
+    simp only [suppF] at h₁ h₂ ⊢
+    exact ⟨ih₁ hor (fun C hC hφ => (h₁ C hC hφ).1) (fun C hC hψ => (h₂ C hC hψ).1),
+           ih₂ hor (fun C hC hφ => (h₁ C hC hφ).2) (fun C hC hψ => (h₂ C hC hψ).2)⟩
+  | imp χ₁ χ₂ _ ih₂ =>
+    intro L hor h₁ h₂
+    simp only [suppF] at h₁ h₂ ⊢
+    intro C hBC hχ₁
+    apply ih₂ (suppF_mono (.or φ ψ) hBC hor)
+    · intro D hCD hφ
+      exact h₁ D (Ext.trans hBC hCD) hφ D (Ext.refl _) (suppF_mono χ₁ hCD hχ₁)
+    · intro D hCD hψ
+      exact h₂ D (Ext.trans hBC hCD) hψ D (Ext.refl _) (suppF_mono χ₁ hCD hχ₁)
+  | or χ₁ χ₂ _ _ =>
+    intro L hor h₁ h₂
+    simp only [suppF] at hor h₁ h₂ ⊢
+    intro C hBC p k₁ k₂
+    apply hor C hBC p
+    · intro D hCD hφ
+      exact h₁ D (Ext.trans hBC hCD) hφ D (Ext.refl _) p
+        (fun E hDE => k₁ E (Ext.trans hCD hDE)) (fun E hDE => k₂ E (Ext.trans hCD hDE))
+    · intro D hCD hψ
+      exact h₂ D (Ext.trans hBC hCD) hψ D (Ext.refl _) p
+        (fun E hDE => k₁ E (Ext.trans hCD hDE)) (fun E hDE => k₂ E (Ext.trans hCD hDE))
+
+abbrev validF (Γ : List Form) (φ : Form) : Prop :=
+  ∀ L : List Rule, (∀ θ, θ ∈ Γ → suppF L θ) → suppF L φ
+
+-- corrección en la clase finita
+theorem soundnessF {Γ : List Form} {φ : Form} (d : NJ Γ φ) : validF Γ φ := by
+  induction d with
+  | @hyp Γ φ h => intro L hΓ; exact hΓ φ h
+  | @andI Γ φ ψ _ _ ih₁ ih₂ =>
+    intro L hΓ; simp only [suppF]; exact ⟨ih₁ L hΓ, ih₂ L hΓ⟩
+  | @andE₁ Γ φ ψ _ ih =>
+    intro L hΓ; have h := ih L hΓ; simp only [suppF] at h; exact h.1
+  | @andE₂ Γ φ ψ _ ih =>
+    intro L hΓ; have h := ih L hΓ; simp only [suppF] at h; exact h.2
+  | @impI Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC hφ
+    apply ih C
+    intro θ hθ
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact hφ
+    | inr h => exact suppF_mono θ hBC (hΓ θ h)
+  | @impE Γ φ ψ _ _ ih₁ ih₂ =>
+    intro L hΓ; have h := ih₁ L hΓ; simp only [suppF] at h
+    exact h L (Ext.refl _) (ih₂ L hΓ)
+  | @orI₁ Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC p k₁ _
+    exact k₁ C (Ext.refl _) (suppF_mono φ hBC (ih L hΓ))
+  | @orI₂ Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC p _ k₂
+    exact k₂ C (Ext.refl _) (suppF_mono ψ hBC (ih L hΓ))
+  | @orE Γ φ ψ χ _ _ _ ih₀ ih₁ ih₂ =>
+    intro L hΓ
+    apply or_elimF φ ψ χ (ih₀ L hΓ)
+    · intro C hBC hφ
+      apply ih₁ C
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hφ
+      | inr h => exact suppF_mono θ hBC (hΓ θ h)
+    · intro C hBC hψ
+      apply ih₂ C
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hψ
+      | inr h => exact suppF_mono θ hBC (hΓ θ h)
+  | @botE Γ φ _ ih =>
+    intro L hΓ; exact bot_elimF φ (ih L hΓ)
+
+theorem suppF_impF (Ls : List Form) (ψ : Form) : ∀ {L : List Rule},
+    suppF L (impF Ls ψ) ↔
+      ∀ L', Ext (ofList L) (ofList L') → (∀ φ, φ ∈ Ls → suppF L' φ) → suppF L' ψ := by
+  induction Ls with
+  | nil =>
+    intro L
+    simp only [impF]
+    constructor
+    · intro h C hBC _; exact suppF_mono ψ hBC h
+    · intro h; exact h L (Ext.refl _) (fun _ hφ => by cases hφ)
+  | cons φ Ls ih =>
+    intro L
+    simp only [impF, suppF]
+    constructor
+    · intro h C hBC hL
+      have h1 := h C hBC (hL φ (List.mem_cons.mpr (Or.inl rfl)))
+      exact (ih.mp h1) C (Ext.refl _) (fun θ hθ => hL θ (List.mem_cons.mpr (Or.inr hθ)))
+    · intro h C hBC hφ
+      apply ih.mpr
+      intro D hCD hL
+      apply h D (Ext.trans hBC hCD)
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact suppF_mono _ hCD hφ
+      | inr h' => exact hL θ h'
+
+/-! ### Hechos como lista finita -/
+
+abbrev factsL (T : List Atom) : List Rule := T.map (fun t => ⟨[], t⟩)
+
+theorem ext_factsL₁ (L : List Rule) (T : List Atom) :
+    Ext (ofList (L ++ factsL T)) (bunion (ofList L) (facts T)) := by
+  intro r hr
+  cases List.mem_append.mp hr with
+  | inl h => exact Or.inl h
+  | inr h =>
+    cases List.mem_map.mp h with
+    | intro t ht =>
+      cases ht with
+      | intro htm e => subst e; exact Or.inr ⟨rfl, htm⟩
+
+theorem ext_factsL₂ (L : List Rule) (T : List Atom) :
+    Ext (bunion (ofList L) (facts T)) (ofList (L ++ factsL T)) := by
+  intro r hr
+  cases hr with
+  | inl h => exact List.mem_append.mpr (Or.inl h)
+  | inr h =>
+    cases r with
+    | mk ps c =>
+      have hp : ps = [] := h.1
+      subst hp
+      exact List.mem_append.mpr (Or.inr (List.mem_map.mpr ⟨c, h.2, rfl⟩))
+
+theorem atomic_adequacyF {L : List Rule} {T : List Atom} {u : Atom} :
+    Deriv (ofList L) T u ↔ ∀ L', Ext (ofList L) (ofList L') →
+      (∀ t, t ∈ T → Deriv (ofList L') [] t) → Deriv (ofList L') [] u := by
+  constructor
+  · intro d L' hL hT
+    exact Deriv.cut_atoms hL d (fun t ht => Or.inr (hT t ht))
+  · intro h
+    have hC := h (L ++ factsL T) (fun _ hr => List.mem_append.mpr (Or.inl hr))
+      (fun t ht => Deriv.app ⟨[], t⟩
+        (List.mem_append.mpr (Or.inr (List.mem_map.mpr ⟨t, ht, rfl⟩)))
+        (by intro _ h'; cases h'))
+    exact Deriv.facts_to_ctx (Deriv.mono (ext_factsL₁ L T) hC)
+
+theorem supp_premF (pq : List Atom × Atom) {L : List Rule} :
+    suppF L (premForm pq) ↔ Deriv (ofList L) pq.1 pq.2 := by
+  unfold premForm
+  rw [suppF_impF, atomic_adequacyF]
+  constructor
+  · intro h D hCD hT
+    have := h D hCD (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro t ht =>
+        cases ht with
+        | intro htm e => subst e; simp only [suppF]; exact hT t htm)
+    simp only [suppF] at this
+    exact this
+  · intro h D hCD hL
+    simp only [suppF]
+    exact h D hCD (fun t ht => by
+      have := hL (.atom t) (List.mem_map.mpr ⟨t, ht, rfl⟩)
+      simp only [suppF] at this
+      exact this)
+
+-- admisible en toda extensión finita
+def AdmF (L : List Rule) (r : Rule) : Prop :=
+  ∀ L', Ext (ofList L) (ofList L') →
+    (∀ pq, pq ∈ r.prems → Deriv (ofList L') pq.1 pq.2) → Deriv (ofList L') [] r.concl
+
+theorem supp_ruleF (r : Rule) {L : List Rule} : suppF L (ruleForm r) ↔ AdmF L r := by
+  unfold ruleForm AdmF
+  rw [suppF_impF]
+  constructor
+  · intro h D hCD hP
+    have := h D hCD (fun φ hφ => by
+      cases List.mem_map.mp hφ with
+      | intro pq hpq =>
+        cases hpq with
+        | intro hm e => subst e; exact (supp_premF pq).mpr (hP pq hm))
+    simp only [suppF] at this
+    exact this
+  · intro h D hCD hL
+    simp only [suppF]
+    exact h D hCD (fun pq hm => (supp_premF pq).mp (hL _ (List.mem_map.mpr ⟨pq, hm, rfl⟩)))
+
+theorem AdmF.mono {L L' : List Rule} (h : Ext (ofList L) (ofList L')) {r : Rule}
+    (ha : AdmF L r) : AdmF L' r :=
+  fun E hE hP => ha E (Ext.trans h hE) hP
+
+-- eliminación de reglas admisibles, en la clase finita
+theorem Deriv.elim_admF {L Sig : List Rule} (hA : ∀ r, r ∈ Sig → AdmF L r)
+    {Γ : List Atom} {q : Atom} (d : Deriv (ofList (L ++ Sig)) Γ q) : Deriv (ofList L) Γ q := by
+  induction d with
+  | @ref Γ p hp => exact Deriv.ref hp
+  | @app Γ r hr _ ih =>
+    cases List.mem_append.mp hr with
+    | inl hB => exact Deriv.app r hB ih
+    | inr hS =>
+      have hD : Deriv (ofList (L ++ factsL Γ)) [] r.concl :=
+        hA r hS (L ++ factsL Γ) (fun _ h => List.mem_append.mpr (Or.inl h))
+          (fun pq hpq => Deriv.mono (ext_factsL₂ L Γ)
+            (Deriv.ctx_to_facts (ih pq hpq) (fun t ht => List.mem_append.mp ht)))
+      exact Deriv.facts_to_ctx (Deriv.mono (ext_factsL₁ L Γ) hD)
+
+theorem extApp {L D Sig : List Rule} (h : Ext (ofList L) (ofList D)) :
+    Ext (ofList (L ++ Sig)) (ofList (D ++ Sig)) := fun r hr =>
+  (List.mem_append.mp hr).elim (fun h' => List.mem_append.mpr (Or.inl (h r h')))
+    (fun h' => List.mem_append.mpr (Or.inr h'))
+
+-- Σ admisible en L ⟹ (⊩_{L ∪ Σ} ψ → ⊩_L ψ)
+theorem suppF_elim_adm {Sig : List Rule} (ψ : Form) : ∀ {L : List Rule},
+    (∀ r, r ∈ Sig → AdmF L r) → suppF (L ++ Sig) ψ → suppF L ψ := by
+  induction ψ with
+  | atom p =>
+    intro L hA h
+    simp only [suppF] at h ⊢
+    exact Deriv.elim_admF hA h
+  | bot =>
+    intro L hA h
+    simp only [suppF] at h ⊢
+    exact fun q => Deriv.elim_admF hA (h q)
+  | and φ ψ ih₁ ih₂ =>
+    intro L hA h
+    simp only [suppF] at h ⊢
+    exact ⟨ih₁ hA h.1, ih₂ hA h.2⟩
+  | imp φ ψ _ ih₂ =>
+    intro L hA h
+    simp only [suppF] at h ⊢
+    intro D hCD hφ
+    have hA' : ∀ r, r ∈ Sig → AdmF D r := fun r hr => AdmF.mono hCD (hA r hr)
+    exact ih₂ hA' (h (D ++ Sig) (extApp hCD)
+      (suppF_mono φ (fun _ h' => List.mem_append.mpr (Or.inl h')) hφ))
+  | or φ ψ _ _ =>
+    intro L hA h
+    simp only [suppF] at h ⊢
+    intro D hCD p k₁ k₂
+    have hA' : ∀ r, r ∈ Sig → AdmF D r := fun r hr => AdmF.mono hCD (hA r hr)
+    have hp := h (D ++ Sig) (extApp hCD) p
+      (fun E hE hφ => k₁ E (Ext.trans (fun _ h' => List.mem_append.mpr (Or.inl h')) hE) hφ)
+      (fun E hE hψ => k₂ E (Ext.trans (fun _ h' => List.mem_append.mpr (Or.inl h')) hE) hψ)
+    exact Deriv.elim_admF hA' hp
+
+/-! ## NJ: debilitamiento y sustitución -/
+
+theorem consSub {Γ Δ : List Form} {φ : Form} (h : ∀ θ, θ ∈ Γ → θ ∈ Δ) :
+    ∀ θ, θ ∈ φ :: Γ → θ ∈ φ :: Δ := fun θ hθ =>
+  (List.mem_cons.mp hθ).elim (fun e => List.mem_cons.mpr (Or.inl e))
+    (fun h' => List.mem_cons.mpr (Or.inr (h θ h')))
+
+theorem NJ.weaken {Γ : List Form} {φ : Form} (d : NJ Γ φ) :
+    ∀ {Δ : List Form}, (∀ θ, θ ∈ Γ → θ ∈ Δ) → NJ Δ φ := by
+  induction d with
+  | hyp h => intro Δ hΔ; exact NJ.hyp (hΔ _ h)
+  | andI _ _ ih₁ ih₂ => intro Δ hΔ; exact NJ.andI (ih₁ hΔ) (ih₂ hΔ)
+  | andE₁ _ ih => intro Δ hΔ; exact NJ.andE₁ (ih hΔ)
+  | andE₂ _ ih => intro Δ hΔ; exact NJ.andE₂ (ih hΔ)
+  | impI _ ih => intro Δ hΔ; exact NJ.impI (ih (consSub hΔ))
+  | impE _ _ ih₁ ih₂ => intro Δ hΔ; exact NJ.impE (ih₁ hΔ) (ih₂ hΔ)
+  | orI₁ _ ih => intro Δ hΔ; exact NJ.orI₁ (ih hΔ)
+  | orI₂ _ ih => intro Δ hΔ; exact NJ.orI₂ (ih hΔ)
+  | orE _ _ _ ih₀ ih₁ ih₂ =>
+    intro Δ hΔ; exact NJ.orE (ih₀ hΔ) (ih₁ (consSub hΔ)) (ih₂ (consSub hΔ))
+  | botE _ ih => intro Δ hΔ; exact NJ.botE (ih hΔ)
+
+theorem substCons {Δ Γ : List Form} {φ : Form} (h : ∀ δ, δ ∈ Δ → NJ Γ δ) :
+    ∀ δ, δ ∈ φ :: Δ → NJ (φ :: Γ) δ := fun δ hδ =>
+  (List.mem_cons.mp hδ).elim (fun e => NJ.hyp (List.mem_cons.mpr (Or.inl e)))
+    (fun h' => NJ.weaken (h δ h') (fun _ hθ => List.mem_cons.mpr (Or.inr hθ)))
+
+theorem NJ.subst {Δ : List Form} {φ : Form} (d : NJ Δ φ) :
+    ∀ {Γ : List Form}, (∀ δ, δ ∈ Δ → NJ Γ δ) → NJ Γ φ := by
+  induction d with
+  | hyp h => intro Γ hΓ; exact hΓ _ h
+  | andI _ _ ih₁ ih₂ => intro Γ hΓ; exact NJ.andI (ih₁ hΓ) (ih₂ hΓ)
+  | andE₁ _ ih => intro Γ hΓ; exact NJ.andE₁ (ih hΓ)
+  | andE₂ _ ih => intro Γ hΓ; exact NJ.andE₂ (ih hΓ)
+  | impI _ ih => intro Γ hΓ; exact NJ.impI (ih (substCons hΓ))
+  | impE _ _ ih₁ ih₂ => intro Γ hΓ; exact NJ.impE (ih₁ hΓ) (ih₂ hΓ)
+  | orI₁ _ ih => intro Γ hΓ; exact NJ.orI₁ (ih hΓ)
+  | orI₂ _ ih => intro Γ hΓ; exact NJ.orI₂ (ih hΓ)
+  | orE _ _ _ ih₀ ih₁ ih₂ =>
+    intro Γ hΓ; exact NJ.orE (ih₀ hΓ) (ih₁ (substCons hΓ)) (ih₂ (substCons hΓ))
+  | botE _ ih => intro Γ hΓ; exact NJ.botE (ih hΓ)
+
+/-! ## Slash de Aczel: propiedad de disyunción para contextos de Harrop -/
+
+def slash (Γ : List Form) : Form → Prop
+  | .atom p  => NJ Γ (.atom p)
+  | .bot     => NJ Γ .bot
+  | .and φ ψ => slash Γ φ ∧ slash Γ ψ
+  | .or φ ψ  => slash Γ φ ∨ slash Γ ψ
+  | .imp φ ψ => NJ Γ (.imp φ ψ) ∧ (slash Γ φ → slash Γ ψ)
+
+theorem slash_nj {Γ : List Form} : ∀ (φ : Form), slash Γ φ → NJ Γ φ
+  | .atom _, h => h
+  | .bot, h => h
+  | .and φ ψ, h => NJ.andI (slash_nj φ (And.left h)) (slash_nj ψ (And.right h))
+  | .or φ ψ, h =>
+    Or.elim h (fun h' => NJ.orI₁ (slash_nj φ h')) (fun h' => NJ.orI₂ (slash_nj ψ h'))
+  | .imp _ _, h => And.left h
+
+theorem slash_bot {Γ : List Form} (hb : NJ Γ .bot) : ∀ (φ : Form), slash Γ φ
+  | .atom _ => NJ.botE hb
+  | .bot => hb
+  | .and φ ψ => And.intro (slash_bot hb φ) (slash_bot hb ψ)
+  | .or φ _ => Or.inl (slash_bot hb φ)
+  | .imp _ ψ => And.intro (NJ.botE hb) (fun _ => slash_bot hb ψ)
+
+theorem consSlash {Δ Γ : List Form} {φ : Form} (h : ∀ δ, δ ∈ Δ → slash Γ δ)
+    (hφ : slash Γ φ) : ∀ δ, δ ∈ φ :: Δ → slash Γ δ := fun δ hδ =>
+  (List.mem_cons.mp hδ).elim (fun e => by subst e; exact hφ) (fun h' => h δ h')
+
+-- Δ ⊢ φ y Γ | Δ ⟹ Γ | φ
+theorem slash_sound {Δ : List Form} {φ : Form} (d : NJ Δ φ) :
+    ∀ {Γ : List Form}, (∀ δ, δ ∈ Δ → slash Γ δ) → slash Γ φ := by
+  induction d with
+  | hyp h => intro Γ hΓ; exact hΓ _ h
+  | andI _ _ ih₁ ih₂ => intro Γ hΓ; exact And.intro (ih₁ hΓ) (ih₂ hΓ)
+  | andE₁ _ ih => intro Γ hΓ; exact And.left (ih hΓ)
+  | andE₂ _ ih => intro Γ hΓ; exact And.right (ih hΓ)
+  | @impI Δ φ ψ d' ih =>
+    intro Γ hΓ
+    exact And.intro (NJ.subst (NJ.impI d') (fun δ hδ => slash_nj δ (hΓ δ hδ)))
+      (fun hφ => ih (consSlash hΓ hφ))
+  | impE _ _ ih₁ ih₂ => intro Γ hΓ; exact (And.right (ih₁ hΓ)) (ih₂ hΓ)
+  | orI₁ _ ih => intro Γ hΓ; exact Or.inl (ih hΓ)
+  | orI₂ _ ih => intro Γ hΓ; exact Or.inr (ih hΓ)
+  | orE _ _ _ ih₀ ih₁ ih₂ =>
+    intro Γ hΓ
+    exact Or.elim (ih₀ hΓ) (fun h => ih₁ (consSlash hΓ h)) (fun h => ih₂ (consSlash hΓ h))
+  | @botE Δ φ _ ih => intro Γ hΓ; exact slash_bot (ih hΓ) φ
+
+-- fórmulas de Harrop: sin ∨ estrictamente positiva
+def harrop : Form → Prop
+  | .atom _  => True
+  | .bot     => True
+  | .and φ ψ => harrop φ ∧ harrop ψ
+  | .or _ _  => False
+  | .imp _ ψ => harrop ψ
+
+theorem harrop_slash {Γ : List Form} : ∀ (H : Form), harrop H → NJ Γ H → slash Γ H
+  | .atom _, _, d => d
+  | .bot, _, d => d
+  | .and φ ψ, hh, d =>
+    And.intro (harrop_slash φ (And.left hh) (NJ.andE₁ d))
+      (harrop_slash ψ (And.right hh) (NJ.andE₂ d))
+  | .or _ _, hh, _ => False.elim hh
+  | .imp φ ψ, hh, d =>
+    And.intro d (fun hφ => harrop_slash ψ hh (NJ.impE d (slash_nj φ hφ)))
+
+-- propiedad de disyunción para contextos de Harrop
+theorem harrop_dp {Γ : List Form} (hΓ : ∀ θ, θ ∈ Γ → harrop θ) {φ ψ : Form}
+    (d : NJ Γ (.or φ ψ)) : NJ Γ φ ∨ NJ Γ ψ := by
+  have hs : slash Γ (.or φ ψ) :=
+    slash_sound d (fun δ hδ => harrop_slash δ (hΓ δ hδ) (NJ.hyp hδ))
+  exact Or.elim hs (fun h => Or.inl (slash_nj φ h)) (fun h => Or.inr (slash_nj ψ h))
+
+theorem harrop_impF (Ls : List Form) (ψ : Form) (h : harrop ψ) : harrop (impF Ls ψ) := by
+  induction Ls with
+  | nil => exact h
+  | cons _ Ls ih => exact ih
+
+theorem harrop_rule (r : Rule) : harrop (ruleForm r) :=
+  harrop_impF (r.prems.map premForm) (.atom r.concl) trivial
+
+/-! ## Contramodelo de Kripke para la regla de Harrop -/
+
+structure Kripke where
+  le    : Nat → Nat → Prop
+  val   : Nat → Atom → Prop
+  refl  : ∀ w, le w w
+  trans : ∀ u v w, le u v → le v w → le u w
+  mono  : ∀ v w p, le v w → val v p → val w p
+
+def forces (M : Kripke) : Nat → Form → Prop
+  | w, .atom p  => M.val w p
+  | _, .bot     => False
+  | w, .and φ ψ => forces M w φ ∧ forces M w ψ
+  | w, .or φ ψ  => forces M w φ ∨ forces M w ψ
+  | w, .imp φ ψ => ∀ v, M.le w v → forces M v φ → forces M v ψ
+
+theorem forces_mono (M : Kripke) (φ : Form) :
+    ∀ {v w : Nat}, M.le v w → forces M v φ → forces M w φ := by
+  induction φ with
+  | atom p => intro v w h hf; exact M.mono v w p h hf
+  | bot => intro v w _ hf; exact hf
+  | and φ ψ ih₁ ih₂ =>
+    intro v w h hf; exact And.intro (ih₁ h (And.left hf)) (ih₂ h (And.right hf))
+  | or φ ψ ih₁ ih₂ =>
+    intro v w h hf
+    exact Or.elim hf (fun h' => Or.inl (ih₁ h h')) (fun h' => Or.inr (ih₂ h h'))
+  | imp φ ψ _ _ => intro v w h hf; exact fun u hwu => hf u (M.trans v w u h hwu)
+
+theorem kripke_sound (M : Kripke) {Γ : List Form} {φ : Form} (d : NJ Γ φ) :
+    ∀ w, (∀ θ, θ ∈ Γ → forces M w θ) → forces M w φ := by
+  induction d with
+  | hyp h => intro w hw; exact hw _ h
+  | andI _ _ ih₁ ih₂ => intro w hw; exact And.intro (ih₁ w hw) (ih₂ w hw)
+  | andE₁ _ ih => intro w hw; exact And.left (ih w hw)
+  | andE₂ _ ih => intro w hw; exact And.right (ih w hw)
+  | impI _ ih =>
+    intro w hw v hwv hφ
+    exact ih v (fun θ hθ => by
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hφ
+      | inr h => exact forces_mono M θ hwv (hw θ h))
+  | impE _ _ ih₁ ih₂ => intro w hw; exact ih₁ w hw w (M.refl w) (ih₂ w hw)
+  | orI₁ _ ih => intro w hw; exact Or.inl (ih w hw)
+  | orI₂ _ ih => intro w hw; exact Or.inr (ih w hw)
+  | orE _ _ _ ih₀ ih₁ ih₂ =>
+    intro w hw
+    exact Or.elim (ih₀ w hw)
+      (fun h => ih₁ w (fun θ hθ => by
+        cases List.mem_cons.mp hθ with
+        | inl e => subst e; exact h
+        | inr h' => exact hw θ h'))
+      (fun h => ih₂ w (fun θ hθ => by
+        cases List.mem_cons.mp hθ with
+        | inl e => subst e; exact h
+        | inr h' => exact hw θ h'))
+  | botE _ ih => intro w hw; exact False.elim (ih w hw)
+
+-- mundos: 0 raíz; 1 ⊩ r; 2 ⊩ q; ≥ 3 ⊩ p.  Átomos: p = 0, q = 1, r = 2
+def hmod : Kripke where
+  le v w := v = w ∨ v = 0
+  val w x := (3 ≤ w ∧ x = 0) ∨ (w = 2 ∧ x = 1) ∨ (w = 1 ∧ x = 2)
+  refl _ := Or.inl rfl
+  trans u v w h₁ h₂ := by
+    cases h₁ with
+    | inl e => subst e; exact h₂
+    | inr e => exact Or.inr e
+  mono v w x h hv := by
+    cases h with
+    | inl e => subst e; exact hv
+    | inr e =>
+      subst e
+      cases hv with
+      | inl h' => exact absurd h'.1 (by decide)
+      | inr h' =>
+        cases h' with
+        | inl h'' => exact absurd h''.1 (by decide)
+        | inr h'' => exact absurd h''.1 (by decide)
+
+abbrev negF (φ : Form) : Form := .imp φ .bot
+
+-- ¬p → q ∨ r  y  (¬p → q) ∨ (¬p → r)
+def harropH : Form := .imp (negF (.atom 0)) (.or (.atom 1) (.atom 2))
+def harropC : Form := .or (.imp (negF (.atom 0)) (.atom 1)) (.imp (negF (.atom 0)) (.atom 2))
+
+theorem hmod_neg {v : Nat} (h : forces hmod v (negF (.atom 0))) : v = 1 ∨ v = 2 := by
+  have h0 : v ≠ 0 := fun e => h 3 (Or.inr e) (Or.inl ⟨by decide, rfl⟩)
+  have h3 : ¬ 3 ≤ v := fun hv => h v (Or.inl rfl) (Or.inl ⟨hv, rfl⟩)
+  omega
+
+theorem hmod_negp1 : forces hmod 1 (negF (.atom 0)) := by
+  intro u hu hp
+  cases hu with
+  | inl e =>
+    subst e
+    cases hp with
+    | inl h => exact absurd h.1 (by decide)
+    | inr h =>
+      cases h with
+      | inl h' => exact absurd h'.1 (by decide)
+      | inr h' => exact absurd h'.2 (by decide)
+  | inr e => exact absurd e (by decide)
+
+theorem hmod_negp2 : forces hmod 2 (negF (.atom 0)) := by
+  intro u hu hp
+  cases hu with
+  | inl e =>
+    subst e
+    cases hp with
+    | inl h => exact absurd h.1 (by decide)
+    | inr h =>
+      cases h with
+      | inl h' => exact absurd h'.2 (by decide)
+      | inr h' => exact absurd h'.1 (by decide)
+  | inr e => exact absurd e (by decide)
+
+theorem hmod_H : forces hmod 0 harropH := by
+  intro v _ hv
+  cases hmod_neg hv with
+  | inl e => subst e; exact Or.inr (Or.inr (Or.inr ⟨rfl, rfl⟩))
+  | inr e => subst e; exact Or.inl (Or.inr (Or.inl ⟨rfl, rfl⟩))
+
+theorem hmod_C : ¬ forces hmod 0 harropC := by
+  intro h
+  cases h with
+  | inl h₁ =>
+    have hq := h₁ 1 (Or.inr rfl) hmod_negp1
+    cases hq with
+    | inl h => exact absurd h.1 (by decide)
+    | inr h =>
+      cases h with
+      | inl h' => exact absurd h'.1 (by decide)
+      | inr h' => exact absurd h'.2 (by decide)
+  | inr h₂ =>
+    have hr := h₂ 2 (Or.inr rfl) hmod_negp2
+    cases hr with
+    | inl h => exact absurd h.1 (by decide)
+    | inr h =>
+      cases h with
+      | inl h' => exact absurd h'.2 (by decide)
+      | inr h' => exact absurd h'.1 (by decide)
+
+-- la regla de Harrop no es derivable
+theorem harrop_rule_not_derivable : ¬ NJ [harropH] harropC := fun d =>
+  hmod_C (kripke_sound hmod d 0 (fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact hmod_H
+    | inr h => cases h))
+
+/-! ## Incompletitud de la B-eS en bases finitas concretas -/
+
+-- Si fuera completa: ⊩_L H ⟹ L* ⊢ H ⟹ (Harrop, DP) L* ⊢ C ⟹ ⊩_L C;
+-- luego H ⊩ C, luego H ⊢ C: contradicción.
+theorem finite_incomplete : ¬ (∀ (Γ : List Form) (φ : Form), validF Γ φ → NJ Γ φ) := by
+  intro hc
+  apply harrop_rule_not_derivable
+  apply hc
+  intro L hL
+  have hH : suppF L harropH := hL _ mem0
+  -- L* ⊩ H (exportación en la clase finita)
+  have v1 : validF (L.map ruleForm) harropH := by
+    intro L' hL'
+    have hA : ∀ r, r ∈ L → AdmF L' r :=
+      fun r hr => (supp_ruleF r).mp (hL' _ (List.mem_map.mpr ⟨r, hr, rfl⟩))
+    exact suppF_elim_adm harropH hA
+      (suppF_mono harropH (fun _ h => List.mem_append.mpr (Or.inr h)) hH)
+  have d1 := hc _ _ v1
+  -- ¬p, L* ⊢ q ∨ r
+  have d2 : NJ (negF (.atom 0) :: L.map ruleForm) (.or (.atom 1) (.atom 2)) :=
+    NJ.impE (NJ.weaken d1 (fun θ hθ => List.mem_cons.mpr (Or.inr hθ))) (NJ.hyp mem0)
+  have hΓ : ∀ θ, θ ∈ negF (.atom 0) :: L.map ruleForm → harrop θ := fun θ hθ => by
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact trivial
+    | inr h =>
+      cases List.mem_map.mp h with
+      | intro r hr =>
+        cases hr with
+        | intro _ e => subst e; exact harrop_rule r
+  have d3 : NJ (L.map ruleForm) harropC := by
+    cases harrop_dp hΓ d2 with
+    | inl h => exact NJ.orI₁ (NJ.impI h)
+    | inr h => exact NJ.orI₂ (NJ.impI h)
+  -- L* ⊢ C ⟹ ⊩_L C (corrección; las reglas de L son admisibles en L)
+  exact soundnessF d3 L (fun θ hθ => by
+    cases List.mem_map.mp hθ with
+    | intro r hr =>
+      cases hr with
+      | intro hm e =>
+        subst e
+        exact (supp_ruleF r).mpr (fun L' hL' hP => Deriv.app r (hL' r hm) (fun pq hpq => by
+          rw [List.append_nil]; exact hP pq hpq)))
+
 end BeS

@@ -2021,6 +2021,476 @@ theorem cost_facts {K : List F} {A : List Nat} {φ : Fm} {m n : Nat}
     Cost K φ (m + n) :=
   Op.mono _ (cut_facts hA n K (enc φ) h) (fun _ hD => (List.mem_append.mp hD).elim id id)
 
+/-! ## Reglas de Horn con cuerpo conjuntivo: también aditivo -/
+
+-- b ∩ c₁ ∩ … ∩ c_k
+def bodyF : Nat → List Nat → F
+  | b, []      => .atm b
+  | b, c :: cs => .and (.atm b) (bodyF c cs)
+
+theorem bodyF_horn : ∀ (b : Nat) (cs : List Nat), (bodyF b cs).horn
+  | _, [] => trivial
+  | _, c :: cs => And.intro trivial (bodyF_horn c cs)
+
+theorem Op.inv_body {k : Nat} {Q : List F} : ∀ (b : Nat) (cs : List Nat),
+    Op k Q (bodyF b cs) → ∀ x, x ∈ b :: cs → Op k Q (.atm x)
+  | b, [], h, x, hx => by
+    cases List.mem_cons.mp hx with
+    | inl e => rw [e]; exact h
+    | inr h' => cases h'
+  | b, c :: cs, h, x, hx => by
+    have hh := Op.inv_and h
+    cases List.mem_cons.mp hx with
+    | inl e => rw [e]; exact hh.1
+    | inr h' => exact Op.inv_body c cs hh.2 x h'
+
+theorem horn_flat' {a : Nat} {G₀ : F} {Q : List F} (hQ : ∀ D, D ∈ Q → HornC D) :
+    ∀ D, D ∈ F.imp G₀ (.atm a) :: Q → Flat D := by
+  intro D hD
+  cases List.mem_cons.mp hD with
+  | inl e => exact Or.inr ⟨_, _, e⟩
+  | inr h => exact horn_flat (b := 0) (a := 0) hQ D (List.mem_cons.mpr (Or.inr h))
+
+-- noK para cuerpo arbitrario
+theorem noK' {a : Nat} {G₀ : F} {Q : List F} (hQ : ∀ D, D ∈ Q → HornC D) :
+    ∀ (k : Nat) (G : F), G.horn → ¬ Op k (.imp G₀ (.atm a) :: Q) (.atm a) →
+      Op k (.imp G₀ (.atm a) :: Q) G → Op k Q G := by
+  intro k
+  induction k with
+  | zero => intro G _ _ h; cases h
+  | succ k ih =>
+    intro G hG hna h
+    have hna' : ¬ Op k (.imp G₀ (.atm a) :: Q) (.atm a) :=
+      fun h' => hna (Op.lift h' (Nat.le_succ k))
+    cases h with
+    | fact e =>
+      have hm := Elab.flat (horn_flat' hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' => cases e'
+      | inr h' => exact Op.fact (Elab.mem h')
+    | @back _ _ G' x e h' =>
+      have hm := Elab.flat (horn_flat' hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' =>
+        have hx := F.atm.inj (F.imp.inj e').2
+        rw [hx] at e
+        exact absurd (Op.back e h') hna
+      | inr h'' => exact Op.back (Elab.mem h'') (ih G' (horn_body hQ h'') hna' h')
+    | and h₁ h₂ => exact Op.and (ih _ (And.left hG) hna' h₁) (ih _ (And.right hG) hna' h₂)
+    | orL h' => exact Op.orL (ih _ (And.left hG) hna' h')
+    | orR h' => exact Op.orR (ih _ (And.right hG) hna' h')
+    | aug _ => exact False.elim hG
+    | gen _ _ => exact False.elim hG
+
+-- K = b ∩ cs ⊃ a; b, cs, P ⊢ₘ a; K, Q ⊢ₙ G ⟹ P, Q ⊢_{n+m} G
+theorem cut_rule_hornC {a b m : Nat} {cs : List Nat} {P Q : List F}
+    (hQ : ∀ D, D ∈ Q → HornC D) (hP : Op m ((b :: cs).map F.atm ++ P) (.atm a)) :
+    ∀ N n, n ≤ N → ∀ (G : F), G.horn → Op n (.imp (bodyF b cs) (.atm a) :: Q) G →
+      Op (n + m) (P ++ Q) G := by
+  intro N
+  induction N with
+  | zero =>
+    intro n hn G _ h
+    have := Op.pos h
+    omega
+  | succ N ih =>
+    intro n hn G hG h
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      have hm := Elab.flat (horn_flat' hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' => cases e'
+      | inr h' => exact Op.lift (Op.fact (n := 0) (Elab.mem (inR _ h'))) (by omega)
+    | @back k _ G' x e h' =>
+      have hm := Elab.flat (horn_flat' hQ) e
+      cases List.mem_cons.mp hm with
+      | inr h'' =>
+        have d := ih k (by omega) G' (horn_body hQ h'') h'
+        exact Op.lift (Op.back (Elab.mem (inR _ h'')) d) (by omega)
+      | inl e' =>
+        have hh := F.imp.inj e'
+        have hx := F.atm.inj hh.2
+        rw [hx]
+        rw [hh.1] at h'
+        cases Classical.em (Op k (.imp (bodyF b cs) (.atm a) :: Q) (.atm a)) with
+        | inl ha => exact Op.lift (ih k (by omega) (.atm a) trivial ha) (by omega)
+        | inr ha =>
+          have d0 := noK' hQ k (bodyF b cs) (bodyF_horn b cs) ha h'
+          have d1 : ∀ y, y ∈ b :: cs → Op k (P ++ Q) (.atm y) :=
+            fun y hy => Op.mono k (Op.inv_body b cs d0 y hy) inR
+          have d2 := cut_facts d1 m P (.atm a) hP
+          exact Op.mono _ (Op.lift d2 (by omega)) (fun D hD => by
+            cases List.mem_append.mp hD with
+            | inl h => exact h
+            | inr h => exact List.mem_append.mpr (Or.inl h))
+    | @and k _ _ _ h₁ h₂ =>
+      exact Op.lift (Op.and (ih k (by omega) _ (And.left hG) h₁)
+        (ih k (by omega) _ (And.right hG) h₂)) (by omega)
+    | @orL k _ _ _ h' => exact Op.lift (Op.orL (ih k (by omega) _ (And.left hG) h')) (by omega)
+    | @orR k _ _ _ h' => exact Op.lift (Op.orR (ih k (by omega) _ (And.right hG) h')) (by omega)
+    | aug _ => exact False.elim hG
+    | gen _ _ => exact False.elim hG
+
+-- κ_{P,Q}(G) ≤ κ_{K,Q}(G) + κ_{b,cs,P}(a), con Q y G de Horn
+theorem cost_rule_hornC {a b : Nat} {cs : List Nat} {P Q : List F} {G : F} {m n : Nat}
+    (hQ : ∀ D, D ∈ Q → HornC D) (hG : G.horn)
+    (hP : Op m ((b :: cs).map F.atm ++ P) (.atm a))
+    (h : Op n (.imp (bodyF b cs) (.atm a) :: Q) G) : Op (n + m) (P ++ Q) G :=
+  cut_rule_hornC hQ hP n n (Nat.le_refl _) G hG h
+
+/-! ## Contextos hipotéticos: el ahorro de una regla es lineal en los Augment por rama
+  `OpA n α P G`: altura ≤ n, a lo sumo α pasos Augment por rama. -/
+
+inductive OpA : Nat → Nat → List F → F → Prop where
+  | fact {n α : Nat} {P : List F} {A : Nat} :
+      Elab P (.atm A) → OpA (n + 1) α P (.atm A)
+  | back {n α : Nat} {P : List F} {G : F} {A : Nat} :
+      Elab P (.imp G (.atm A)) → OpA n α P G → OpA (n + 1) α P (.atm A)
+  | and {n α : Nat} {P : List F} {G₁ G₂ : F} :
+      OpA n α P G₁ → OpA n α P G₂ → OpA (n + 1) α P (.and G₁ G₂)
+  | orL {n α : Nat} {P : List F} {G₁ G₂ : F} :
+      OpA n α P G₁ → OpA (n + 1) α P (.or G₁ G₂)
+  | orR {n α : Nat} {P : List F} {G₁ G₂ : F} :
+      OpA n α P G₂ → OpA (n + 1) α P (.or G₁ G₂)
+  | aug {n α : Nat} {P : List F} {D G : F} :
+      OpA n α (D :: P) G → OpA (n + 1) (α + 1) P (.imp D G)
+  | gen {n α : Nat} {P : List F} {X : Nat} {G : F} {A : Nat} :
+      Fresh A P (.all X G) → OpA n α P (G.sub X A) → OpA (n + 1) α P (.all X G)
+
+theorem OpA.toOp {n α : Nat} {P : List F} {G : F} (h : OpA n α P G) : Op n P G := by
+  induction h with
+  | fact e => exact Op.fact e
+  | back e _ ih => exact Op.back e ih
+  | and _ _ ih₁ ih₂ => exact Op.and ih₁ ih₂
+  | orL _ ih => exact Op.orL ih
+  | orR _ ih => exact Op.orR ih
+  | aug _ ih => exact Op.aug ih
+  | gen hA _ ih => exact Op.gen hA ih
+
+theorem OpA.lift {n α : Nat} {P : List F} {G : F} (h : OpA n α P G) :
+    ∀ {n' α' : Nat}, n ≤ n' → α ≤ α' → OpA n' α' P G := by
+  induction h with
+  | fact e =>
+    intro n' α' hn _
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.fact e
+  | back e _ ih =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.back e (ih (by omega) hα)
+  | and _ _ ih₁ ih₂ =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.and (ih₁ (by omega) hα) (ih₂ (by omega) hα)
+  | orL _ ih =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.orL (ih (by omega) hα)
+  | orR _ ih =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.orR (ih (by omega) hα)
+  | aug _ ih =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k =>
+      cases α' with
+      | zero => exact absurd hα (by omega)
+      | succ β => exact OpA.aug (ih (by omega) (by omega))
+  | gen hA _ ih =>
+    intro n' α' hn hα
+    cases n' with
+    | zero => exact absurd hn (by omega)
+    | succ k => exact OpA.gen hA (ih (by omega) hα)
+
+theorem OpA.ren {n α : Nat} {P : List F} {G : F} (h : OpA n α P G) :
+    ∀ σ : Nat → Nat, OpA n α (P.map (F.ren σ)) (G.ren σ) := by
+  induction h with
+  | fact e => intro σ; exact OpA.fact (Elab.ren σ e)
+  | back e _ ih => intro σ; exact OpA.back (Elab.ren σ e) (ih σ)
+  | and _ _ ih₁ ih₂ => intro σ; exact OpA.and (ih₁ σ) (ih₂ σ)
+  | orL _ ih => intro σ; exact OpA.orL (ih σ)
+  | orR _ ih => intro σ; exact OpA.orR (ih σ)
+  | aug _ ih => intro σ; exact OpA.aug (ih σ)
+  | @gen _ _ P X G A hA _ ih =>
+    intro σ
+    cases (show ∃ B, Fresh B (P.map (F.ren σ)) ((F.all X G).ren σ) from
+        ⟨_, fresh_exists _ _⟩) with
+    | intro B hB =>
+      have h1 := ih (upd σ A B)
+      have e1 : P.map (F.ren (upd σ A B)) = P.map (F.ren σ) :=
+        map_ren_congr P (fun D hD a ha =>
+          upd_ne (fun e => hA.1 D hD (by rw [← e]; exact ha)))
+      have e2 : (G.sub X A).ren (upd σ A B) = (G.ren σ).sub X B := by
+        rw [F.ren_sub, upd_self,
+          F.ren_congr G (fun a ha => upd_ne (fun e => hA.2 (by rw [← e]; exact ha)))]
+      rw [e1, e2] at h1
+      exact OpA.gen hB h1
+
+theorem OpA.mono (n : Nat) : ∀ {α : Nat} {P : List F} {G : F}, OpA n α P G →
+    ∀ {Q : List F}, (∀ D, D ∈ P → D ∈ Q) → OpA n α Q G := by
+  induction n with
+  | zero => intro _ _ _ h; cases h
+  | succ k ih =>
+    intro _ P _ h Q hPQ
+    cases h with
+    | fact e => exact OpA.fact (Elab.mono hPQ e)
+    | back e h' => exact OpA.back (Elab.mono hPQ e) (ih h' hPQ)
+    | and h₁ h₂ => exact OpA.and (ih h₁ hPQ) (ih h₂ hPQ)
+    | orL h' => exact OpA.orL (ih h' hPQ)
+    | orR h' => exact OpA.orR (ih h' hPQ)
+    | aug h' =>
+      exact OpA.aug (ih h' (fun E hE => by
+        cases List.mem_cons.mp hE with
+        | inl e => exact List.mem_cons.mpr (Or.inl e)
+        | inr h'' => exact List.mem_cons.mpr (Or.inr (hPQ E h''))))
+    | @gen _ _ _ X G' A hA h' =>
+      cases (show ∃ B, Fresh B Q (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro B hB =>
+        have h'' := OpA.ren h' (upd id A B)
+        rw [map_ren_away P hA.1, sub_ren_away (G := G') hA.2] at h''
+        exact OpA.gen hB (ih h'' hPQ)
+
+theorem Elab.clause_only {G₀ : F} {a : Nat} {E : F} (h : Elab [F.imp G₀ (.atm a)] E) :
+    E = .imp G₀ (.atm a) := by
+  have hm := Elab.flat (fun D hD => by
+    cases List.mem_cons.mp hD with
+    | inl e => exact Or.inr ⟨_, _, e⟩
+    | inr h' => cases h') h
+  cases List.mem_cons.mp hm with
+  | inl e => exact e
+  | inr h' => cases h'
+
+-- a no sale en el mismo contexto ⟹ K = G₀ ⊃ a solo se usa bajo un Augment
+theorem noK_ctx {a c α : Nat} {G₀ : F} {P Q : List F}
+    (ih : ∀ β, α = β + 1 → ∀ n (Q' : List F) (G : F),
+      OpA n β (.imp G₀ (.atm a) :: Q') G → Op (n + c) (P ++ Q') G) :
+    ∀ (h : Nat) (G : F), ¬ OpA h α (.imp G₀ (.atm a) :: Q) (.atm a) →
+      OpA h α (.imp G₀ (.atm a) :: Q) G → Op (h + c) (P ++ Q) G := by
+  intro h
+  induction h with
+  | zero => intro _ _ d; cases d
+  | succ k ihk =>
+    intro G hna d
+    have hna' : ¬ OpA k α (.imp G₀ (.atm a) :: Q) (.atm a) :=
+      fun d' => hna (OpA.lift d' (Nat.le_succ k) (Nat.le_refl α))
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    have up : ∀ {G' : F}, Op (k + c + 1) (P ++ Q) G' → Op (k + 1 + c) (P ++ Q) G' :=
+      fun d' => Op.lift d' (by omega)
+    cases d with
+    | fact e =>
+      cases Elab.split (L₁ := [.imp G₀ (.atm a)]) (L₂ := Q) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact up (Op.fact (Elab.mono inR e'))
+    | @back _ _ _ G' _ e d' =>
+      cases Elab.split (L₁ := [.imp G₀ (.atm a)]) (L₂ := Q) e with
+      | inl e' =>
+        have hx := F.atm.inj (F.imp.inj (Elab.clause_only e')).2
+        rw [hx] at e
+        exact absurd (OpA.back e d') hna
+      | inr e' => exact up (Op.back (Elab.mono inR e') (ihk G' hna' d'))
+    | and d₁ d₂ => exact up (Op.and (ihk _ hna' d₁) (ihk _ hna' d₂))
+    | orL d' => exact up (Op.orL (ihk _ hna' d'))
+    | orR d' => exact up (Op.orR (ihk _ hna' d'))
+    | @aug _ β _ D G' d' =>
+      have d1 : OpA k β (.imp G₀ (.atm a) :: D :: Q) G' := OpA.mono k d' (fun E hE => by
+        cases List.mem_cons.mp hE with
+        | inl e => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl e)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr h'))))
+      have d2 := ih β rfl k (D :: Q) G' d1
+      exact up (Op.aug (Op.mono _ d2 (fun E hE => by
+        cases List.mem_append.mp hE with
+        | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))))
+    | @gen _ _ _ X G' A hA d' =>
+      cases (show ∃ B, Fresh B (P ++ Q) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro B hB =>
+        have d'' := OpA.ren d' (upd id A B)
+        rw [map_ren_away (.imp G₀ (.atm a) :: Q) hA.1, sub_ren_away (G := G') hA.2] at d''
+        exact up (Op.gen hB (ihk _ hna' d''))
+
+-- paso: con la cota para α − 1, inducción fuerte en la altura
+theorem cut_ctx_step {a b m α : Nat} {cs : List Nat} {P : List F}
+    (hP : Op m ((b :: cs).map F.atm ++ P) (.atm a))
+    (ih : ∀ β, α = β + 1 → ∀ n (Q' : List F) (G : F),
+      OpA n β (.imp (bodyF b cs) (.atm a) :: Q') G → Op (n + m * α) (P ++ Q') G) :
+    ∀ N n, n ≤ N → ∀ (Q : List F) (G : F), OpA n α (.imp (bodyF b cs) (.atm a) :: Q) G →
+      Op (n + m * α + m) (P ++ Q) G := by
+  intro N
+  induction N with
+  | zero =>
+    intro n hn _ _ d
+    have := Op.pos (OpA.toOp d)
+    omega
+  | succ N ihN =>
+    intro n hn Q G d
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    cases d with
+    | fact e =>
+      cases Elab.split (L₁ := [.imp (bodyF b cs) (.atm a)]) (L₂ := Q) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact Op.lift (Op.fact (n := 0) (Elab.mono inR e')) (by omega)
+    | @back k _ _ G' _ e d' =>
+      cases Elab.split (L₁ := [.imp (bodyF b cs) (.atm a)]) (L₂ := Q) e with
+      | inr e' =>
+        have d1 := ihN k (by omega) Q G' d'
+        exact Op.lift (Op.back (Elab.mono inR e') d1) (by omega)
+      | inl e' =>
+        have hh := F.imp.inj (Elab.clause_only e')
+        have hx := F.atm.inj hh.2
+        rw [hx]
+        rw [hh.1] at d'
+        cases Classical.em (OpA k α (.imp (bodyF b cs) (.atm a) :: Q) (.atm a)) with
+        | inl ha =>
+          -- a ya salía antes en el mismo contexto
+          exact Op.lift (ihN k (by omega) Q (.atm a) ha) (by omega)
+        | inr ha =>
+          -- K solo bajo Augment: el cuerpo sale con la cota de α − 1
+          have d0 := noK_ctx ih k (bodyF b cs) ha d'
+          have d1 : ∀ y, y ∈ b :: cs → Op (k + m * α) (P ++ Q) (.atm y) :=
+            fun y hy => Op.inv_body b cs d0 y hy
+          have d2 := cut_facts d1 m P (.atm a) hP
+          exact Op.mono _ (Op.lift d2 (by omega)) (fun D hD => by
+            cases List.mem_append.mp hD with
+            | inl h => exact h
+            | inr h => exact List.mem_append.mpr (Or.inl h))
+    | @and k _ _ _ _ d₁ d₂ =>
+      exact Op.lift (Op.and (ihN k (by omega) Q _ d₁) (ihN k (by omega) Q _ d₂)) (by omega)
+    | @orL k _ _ _ _ d' => exact Op.lift (Op.orL (ihN k (by omega) Q _ d')) (by omega)
+    | @orR k _ _ _ _ d' => exact Op.lift (Op.orR (ihN k (by omega) Q _ d')) (by omega)
+    | @aug k β _ D G' d' =>
+      have d1 : OpA k β (.imp (bodyF b cs) (.atm a) :: D :: Q) G' := OpA.mono k d' (fun E hE => by
+        cases List.mem_cons.mp hE with
+        | inl e => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl e)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr h'))))
+      have d2 := ih β rfl k (D :: Q) G' d1
+      exact Op.lift (Op.aug (Op.mono _ d2 (fun E hE => by
+        cases List.mem_append.mp hE with
+        | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h')))))) (by omega)
+    | @gen k _ _ X G' A hA d' =>
+      cases (show ∃ B, Fresh B (P ++ Q) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro B hB =>
+        have d'' := OpA.ren d' (upd id A B)
+        rw [map_ren_away (.imp (bodyF b cs) (.atm a) :: Q) hA.1,
+          sub_ren_away (G := G') hA.2] at d''
+        exact Op.lift (Op.gen hB (ihN k (by omega) Q _ d'')) (by omega)
+
+-- K = b ∩ cs ⊃ a; b, cs, P ⊢ₘ a; K, Q ⊢ₙ G con ≤ α Augment por rama ⟹ P, Q ⊢_{n+m(α+1)} G
+theorem cut_rule_ctx {a b m : Nat} {cs : List Nat} {P : List F}
+    (hP : Op m ((b :: cs).map F.atm ++ P) (.atm a)) :
+    ∀ α n (Q : List F) (G : F), OpA n α (.imp (bodyF b cs) (.atm a) :: Q) G →
+      Op (n + m * α + m) (P ++ Q) G := by
+  intro α
+  induction α with
+  | zero =>
+    intro n Q G d
+    exact cut_ctx_step hP (fun β hβ => absurd hβ (by omega)) n n (Nat.le_refl _) Q G d
+  | succ β ihβ =>
+    intro n Q G d
+    refine cut_ctx_step hP (fun β' hβ' n' Q' G' d' => ?_) n n (Nat.le_refl _) Q G d
+    have e : β' = β := by omega
+    rw [e] at d'
+    have d1 := ihβ n' Q' G' d'
+    rw [Nat.left_distrib, Nat.mul_one]
+    exact Op.lift d1 (by omega)
+
+-- Horn: sin Augment, presupuesto 0
+theorem horn_budget {R : List F} (hR : ∀ D, D ∈ R → HornC D) :
+    ∀ (n : Nat) (G : F), G.horn → Op n R G → OpA n 0 R G := by
+  have hfl : ∀ D, D ∈ R → Flat D := fun D hD => by
+    cases hR D hD with
+    | inl hc => exact Or.inl hc
+    | inr hc =>
+      cases hc with
+      | intro G hc =>
+        cases hc with
+        | intro a' hc => exact Or.inr ⟨G, a', hc.1⟩
+  intro n
+  induction n with
+  | zero => intro _ _ h; cases h
+  | succ k ih =>
+    intro G hG h
+    cases h with
+    | fact e => exact OpA.fact e
+    | @back _ _ G' _ e h' => exact OpA.back e (ih G' (horn_body hR (Elab.flat hfl e)) h')
+    | and h₁ h₂ => exact OpA.and (ih _ (And.left hG) h₁) (ih _ (And.right hG) h₂)
+    | orL h' => exact OpA.orL (ih _ (And.left hG) h')
+    | orR h' => exact OpA.orR (ih _ (And.right hG) h')
+    | aug _ => exact False.elim hG
+    | gen _ _ => exact False.elim hG
+
+-- α = 0 recupera la cota aditiva de Horn
+theorem ctx_horn {a b m n : Nat} {cs : List Nat} {P Q : List F} {G : F}
+    (hQ : ∀ D, D ∈ Q → HornC D) (hG : G.horn)
+    (hP : Op m ((b :: cs).map F.atm ++ P) (.atm a))
+    (h : Op n (.imp (bodyF b cs) (.atm a) :: Q) G) : Op (n + m) (P ++ Q) G := by
+  have hR : ∀ D, D ∈ F.imp (bodyF b cs) (.atm a) :: Q → HornC D := fun D hD => by
+    cases List.mem_cons.mp hD with
+    | inl e => exact Or.inr ⟨_, _, e, bodyF_horn b cs⟩
+    | inr h' => exact hQ D h'
+  have d := cut_rule_ctx hP 0 n Q G (horn_budget hR n G hG h)
+  rw [Nat.mul_zero, Nat.add_zero] at d
+  exact d
+
+-- con K: c_j ≤ 5j + 1 usando j contextos
+theorem amp_upperA (m t : Nat) : ∀ j, j ≤ t → ∀ (P : List F),
+    (∀ D, D ∈ ruleK m :: amp m t → D ∈ P) → OpA (5 * j + 1) j P (.atm (3 * j)) := by
+  intro j
+  induction j with
+  | zero =>
+    intro _ P hP
+    exact OpA.fact (Elab.mem (hP _ (List.mem_cons.mpr (Or.inr mem0))))
+  | succ j ih =>
+    intro hj P hP
+    have inA : ∀ D, D ∈ rds m t → D ∈ P := fun D hD =>
+      hP D (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr
+        (List.mem_append.mpr (Or.inr hD))))))
+    have hC := inA _ (rds_memC (m := m) (by omega : j < t))
+    have hB := inA _ (rds_memB (m := m) (by omega : j < t))
+    have hK : ruleK m ∈ P := hP _ mem0
+    have hP' : ∀ D, D ∈ ruleK m :: amp m t → D ∈ F.atm (3 * (j + 1) + 1) :: P :=
+      fun D hD => List.mem_cons.mpr (Or.inr (hP D hD))
+    have d := ih (by omega) _ hP'
+    have d1 : OpA (5 * j + 1) j (F.atm (3 * (j + 1) + 1) :: P) (.atm (3 * (j + 1) + 1)) :=
+      OpA.fact (Elab.mem mem0)
+    have d2 := OpA.and d1 d
+    have d3 := OpA.back (Elab.mem (List.mem_cons.mpr (Or.inr hB))) d2
+    have d4 := OpA.back (Elab.mem (List.mem_cons.mpr (Or.inr hK))) d3
+    have d5 := OpA.aug d4
+    have d6 := OpA.back (Elab.mem hC) d5
+    exact OpA.lift d6 (by omega) (Nat.le_refl _)
+
+-- A_{m,t}: (m+5)t < κ(c_t) ≤ 5t + 1 + (m+2)(t+1); el coeficiente de mt es exacto
+theorem amp_ctx (m t : Nat) :
+    Cost (amp m t) (.atom (3 * t)) (5 * t + 1 + (m + 2) * t + (m + 2)) ∧
+    ¬ Cost (amp m t) (.atom (3 * t)) (lb (m + 5) t) := by
+  refine ⟨?_, (amplification m t).2.2.2⟩
+  have dK : OpA (5 * t + 1) t (.imp (bodyF 2 []) (.atm (3 * (m + 1) + 2)) :: amp m t)
+      (.atm (3 * t)) := amp_upperA m t t (Nat.le_refl _) _ (fun _ h => h)
+  have d := cut_rule_ctx (b := 2) (cs := []) (P := amp m t)
+    (amp_chain m t (m + 1) (Nat.le_refl _)) t (5 * t + 1) (amp m t) (.atm (3 * t)) dK
+  exact Op.mono _ d (fun _ hD => (List.mem_append.mp hD).elim id id)
+
 /-! ## Cadena de canales: el contenido obedece la desigualdad; la profundidad no -/
 
 -- W ⇝ Y ⇝ Z, cada flecha un canal veraz: el destino no sabe más que el origen

@@ -1693,4 +1693,350 @@ theorem amplification (m t : Nat) :
     hP).1 t (Nat.le_refl _) (by omega) h
   exact Nat.lt_irrefl _ this
 
+/-! ## Retractación
+  Quitar un hecho derivable: κ sube a lo sumo su coste (`cost_cache`).
+  Quitar una regla derivable: a lo sumo multiplicativo (`cost_rule`), y se alcanza.
+  Quitar una cláusula no derivable: salto a ∞. -/
+
+theorem Elab.nil {E : F} (h : Elab [] E) : False := by
+  have hm := Elab.flat (fun D hD => by cases hD) h
+  cases hm
+
+theorem retract_jump : Cost [.atm 0] (.atom 0) 1 ∧ ¬ supp [] (.atom 0) :=
+  And.intro (Op.fact (Elab.mem mem0)) (fun h => by
+    cases h with
+    | intro n h =>
+      cases h with
+      | fact e => exact Elab.nil e
+      | back e _ => exact Elab.nil e)
+
+/-! ## Veracidad respecto de una base nómica B* -/
+
+-- B veraz respecto de B*: cada átomo derivable, bajo cualquier extensión, lo es en B*
+abbrev Ver (B Bs : List F) : Prop :=
+  ∀ (E : List F) (a : Nat), Der (E ++ B) (.atm a) → Der (E ++ Bs) (.atm a)
+
+-- de átomos a objetivos (inducción en el peso)
+theorem ver_lift {B Bs : List F} (hV : Ver B Bs) (s : Nat) :
+    ∀ (G : F), G.w < s → ∀ (E : List F), Der (E ++ B) G → Der (E ++ Bs) G := by
+  induction s with
+  | zero => intro G hw; exact absurd hw (Nat.not_lt_zero _)
+  | succ s ih =>
+    intro G hw E h
+    cases G with
+    | atm a => exact hV E a h
+    | var X =>
+      cases h with
+      | intro n h => cases h
+    | and G₁ G₂ =>
+      have hw' : G₁.w + G₂.w + 1 < s + 1 := hw
+      have hh := Der.inv_and h
+      exact Der.and (ih G₁ (by omega) E hh.1) (ih G₂ (by omega) E hh.2)
+    | or G₁ G₂ =>
+      have hw' : G₁.w + G₂.w + 1 < s + 1 := hw
+      cases h with
+      | intro n h =>
+        cases h with
+        | orL h' => exact Der.orL (ih G₁ (by omega) E ⟨_, h'⟩)
+        | orR h' => exact Der.orR (ih G₂ (by omega) E ⟨_, h'⟩)
+    | imp D G' =>
+      have hw' : D.w + 2 * G'.w + 1 < s + 1 := hw
+      exact Der.aug (ih G' (by omega) (D :: E) (Der.inv_imp h))
+    | all X G' =>
+      have hw' : G'.w + 1 < s + 1 := hw
+      cases (show ∃ A, Fresh A (E ++ Bs) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro A hA =>
+        exact Der.gen hA (ih (G'.sub X A) (by rw [F.w_sub]; omega) E (Der.inv_all h A))
+
+-- veracidad atómica ⟹ veracidad para toda fórmula de IPL
+theorem ver_supp {B Bs : List F} (hV : Ver B Bs) (φ : Fm) (h : supp B φ) : supp Bs φ :=
+  (sis φ Bs).mpr (ver_lift hV _ (enc φ) (Nat.lt_succ_self _) [] ((sis φ B).mp h))
+
+theorem Ver.refl (B : List F) : Ver B B := fun _ _ h => h
+
+-- principio de la fotocopiadora (Dretske): la veracidad compone
+theorem Ver.trans {B₁ B₂ B₃ : List F} (h₁ : Ver B₁ B₂) (h₂ : Ver B₂ B₃) : Ver B₁ B₃ :=
+  fun E a h => h₂ E a (h₁ E a h)
+
+theorem Ver.of_ext {B Bs : List F} (h : Ext B Bs) : Ver B Bs :=
+  fun _ _ d => Der.mono d (fun D hD => (List.mem_append.mp hD).elim
+    (fun h' => List.mem_append.mpr (Or.inl h'))
+    (fun h' => List.mem_append.mpr (Or.inr (h D h'))))
+
+-- procesar (añadir una cláusula derivable) preserva la veracidad
+theorem Ver.process {K : F} (hn : K.neutral) (hc : K.closed) {B Bs : List F}
+    (hK : Der B K) (hV : Ver B Bs) : Ver (K :: B) Bs := by
+  intro E a h
+  apply hV E a
+  have hK' : Der (E ++ B) K := Der.mono hK (fun D hD => List.mem_append.mpr (Or.inr hD))
+  have h' : Der (K :: (E ++ B)) (.atm a) := Der.mono h (fun D hD => by
+    cases List.mem_append.mp hD with
+    | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+    | inr h =>
+      cases List.mem_cons.mp h with
+      | inl e => exact List.mem_cons.mpr (Or.inl e)
+      | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))
+  have d := cut hn hc hK' h'
+  exact Der.mono d (fun _ hD => (List.mem_append.mp hD).elim id id)
+
+/-! ## Información de un mensaje y procesamiento de datos -/
+
+-- contenido nuevo del mensaje M para el receptor K
+abbrev Info (K M : List F) (φ : Fm) : Prop := supp (M ++ K) φ ∧ ¬ supp K φ
+
+-- Q procesado desde B: cláusulas neutras, cerradas y derivables de B
+abbrev Proc (B Q : List F) : Prop := ∀ D, D ∈ Q → D.neutral ∧ D.closed ∧ Der B D
+
+theorem proc_conservative {B : List F} : ∀ (Q : List F), Proc B Q →
+    ∀ φ, supp (Q ++ B) φ ↔ supp B φ := by
+  intro Q
+  induction Q with
+  | nil => intro _ φ; exact Iff.rfl
+  | cons D Q ih =>
+    intro hQ φ
+    have hD := hQ D mem0
+    have hQ' : Proc B Q := fun E hE => hQ E (List.mem_cons.mpr (Or.inr hE))
+    have hDer : Der (Q ++ B) D :=
+      Der.mono (And.right (And.right hD)) (fun E hE => List.mem_append.mpr (Or.inr hE))
+    exact (derived_conservative (And.left hD) (And.left (And.right hD)) hDer φ).trans
+      (ih hQ' φ)
+
+theorem Ver.proc {B Bs : List F} (hV : Ver B Bs) : ∀ (Q : List F), Proc B Q →
+    Ver (Q ++ B) Bs := by
+  intro Q
+  induction Q with
+  | nil => intro _; exact hV
+  | cons D Q ih =>
+    intro hQ
+    have hD := hQ D mem0
+    have hQ' : Proc B Q := fun E hE => hQ E (List.mem_cons.mpr (Or.inr hE))
+    exact Ver.process (And.left hD) (And.left (And.right hD))
+      (Der.mono (And.right (And.right hD)) (fun E hE => List.mem_append.mpr (Or.inr hE)))
+      (ih hQ')
+
+-- Procesamiento de datos inferencial: procesar en destino no añade contenido
+-- y preserva la veracidad. (La ganancia de profundidad: `cost_cache`, `cost_rule`.)
+theorem data_processing {K M Q Bs : List F} (hQ : Proc (M ++ K) Q) (hV : Ver (M ++ K) Bs) :
+    (∀ φ, Info K (Q ++ M) φ ↔ Info K M φ) ∧ Ver (Q ++ (M ++ K)) Bs := by
+  constructor
+  · intro φ
+    have e := proc_conservative Q hQ φ
+    show (supp ((Q ++ M) ++ K) φ ∧ ¬ supp K φ) ↔ (supp (M ++ K) φ ∧ ¬ supp K φ)
+    rw [List.append_assoc]
+    exact ⟨fun h => ⟨e.mp h.1, h.2⟩, fun h => ⟨e.mpr h.1, h.2⟩⟩
+  · exact Ver.proc hV Q hQ
+
+/-! ## Sin hipótesis no hay amplificación: programas de Horn (primer nivel) -/
+
+-- objetivos de Horn: átomos, ∩, ∪
+def F.horn : F → Prop
+  | .atm _   => True
+  | .and f g => f.horn ∧ g.horn
+  | .or f g  => f.horn ∧ g.horn
+  | _        => False
+
+-- cláusula de Horn: hecho o G ⊃ a con G de Horn
+abbrev HornC (D : F) : Prop := (∃ a, D = .atm a) ∨ (∃ G a, D = .imp G (.atm a) ∧ G.horn)
+
+theorem horn_flat {a b : Nat} {Q : List F} (hQ : ∀ D, D ∈ Q → HornC D) :
+    ∀ D, D ∈ F.imp (.atm b) (.atm a) :: Q → Flat D := by
+  intro D hD
+  cases List.mem_cons.mp hD with
+  | inl e => exact Or.inr ⟨_, _, e⟩
+  | inr h =>
+    cases hQ D h with
+    | inl hc => exact Or.inl hc
+    | inr hc =>
+      cases hc with
+      | intro G hc =>
+        cases hc with
+        | intro a' hc => exact Or.inr ⟨G, a', hc.1⟩
+
+theorem horn_body {Q : List F} (hQ : ∀ D, D ∈ Q → HornC D) {G : F} {x : Nat}
+    (h : F.imp G (.atm x) ∈ Q) : G.horn := by
+  cases hQ _ h with
+  | inl hc =>
+    cases hc with
+    | intro _ e => cases e
+  | inr hc =>
+    cases hc with
+    | intro G₀ hc =>
+      cases hc with
+      | intro a' hc =>
+        have e₀ := (F.imp.inj hc.1).1
+        rw [e₀]
+        exact hc.2
+
+-- si a no se deriva con altura ≤ k, K = b ⊃ a no se usa
+theorem noK {a b : Nat} {Q : List F} (hQ : ∀ D, D ∈ Q → HornC D) :
+    ∀ (k : Nat) (G : F), G.horn → ¬ Op k (.imp (.atm b) (.atm a) :: Q) (.atm a) →
+      Op k (.imp (.atm b) (.atm a) :: Q) G → Op k Q G := by
+  intro k
+  induction k with
+  | zero => intro G _ _ h; cases h
+  | succ k ih =>
+    intro G hG hna h
+    have hna' : ¬ Op k (.imp (.atm b) (.atm a) :: Q) (.atm a) :=
+      fun h' => hna (Op.lift h' (Nat.le_succ k))
+    cases h with
+    | fact e =>
+      have hm := Elab.flat (horn_flat hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' => cases e'
+      | inr h' => exact Op.fact (Elab.mem h')
+    | @back _ _ G' x e h' =>
+      have hm := Elab.flat (horn_flat hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' =>
+        have hx := F.atm.inj (F.imp.inj e').2
+        rw [hx] at e
+        exact absurd (Op.back e h') hna
+      | inr h'' => exact Op.back (Elab.mem h'') (ih G' (horn_body hQ h'') hna' h')
+    | and h₁ h₂ => exact Op.and (ih _ (And.left hG) hna' h₁) (ih _ (And.right hG) hna' h₂)
+    | orL h' => exact Op.orL (ih _ (And.left hG) hna' h')
+    | orR h' => exact Op.orR (ih _ (And.right hG) hna' h')
+    | aug _ => exact False.elim hG
+    | gen _ _ => exact False.elim hG
+
+-- Horn: P ⊢ₘ b ⊃ a (vía b, P ⊢ₘ a), (b ⊃ a), Q ⊢ₙ G ⟹ P, Q ⊢_{n+m} G
+theorem cut_rule_horn {a b m : Nat} {P Q : List F} (hQ : ∀ D, D ∈ Q → HornC D)
+    (hP : Op m (.atm b :: P) (.atm a)) :
+    ∀ N n, n ≤ N → ∀ (G : F), G.horn → Op n (.imp (.atm b) (.atm a) :: Q) G →
+      Op (n + m) (P ++ Q) G := by
+  intro N
+  induction N with
+  | zero =>
+    intro n hn G _ h
+    have := Op.pos h
+    omega
+  | succ N ih =>
+    intro n hn G hG h
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      have hm := Elab.flat (horn_flat hQ) e
+      cases List.mem_cons.mp hm with
+      | inl e' => cases e'
+      | inr h' => exact Op.lift (Op.fact (n := 0) (Elab.mem (inR _ h'))) (by omega)
+    | @back k _ G' x e h' =>
+      have hm := Elab.flat (horn_flat hQ) e
+      cases List.mem_cons.mp hm with
+      | inr h'' =>
+        have d := ih k (by omega) G' (horn_body hQ h'') h'
+        exact Op.lift (Op.back (Elab.mem (inR _ h'')) d) (by omega)
+      | inl e' =>
+        have hh := F.imp.inj e'
+        have hx := F.atm.inj hh.2
+        rw [hx]
+        rw [hh.1] at h'
+        cases Classical.em (Op k (.imp (.atm b) (.atm a) :: Q) (.atm a)) with
+        | inl ha =>
+          -- a ya se derivaba más abajo
+          exact Op.lift (ih k (by omega) (.atm a) trivial ha) (by omega)
+        | inr ha =>
+          -- K no aparece bajo esta rama: b sale de Q
+          have d0 := noK hQ k (.atm b) trivial ha h'
+          have d1 : Op k (P ++ Q) (.atm b) := Op.mono k d0 inR
+          have d2 := cut_atom d1 m P (.atm a) hP
+          exact Op.mono _ (Op.lift d2 (by omega)) (fun D hD => by
+            cases List.mem_append.mp hD with
+            | inl h => exact h
+            | inr h => exact List.mem_append.mpr (Or.inl h))
+    | @and k _ _ _ h₁ h₂ =>
+      exact Op.lift (Op.and (ih k (by omega) _ (And.left hG) h₁)
+        (ih k (by omega) _ (And.right hG) h₂)) (by omega)
+    | @orL k _ _ _ h' => exact Op.lift (Op.orL (ih k (by omega) _ (And.left hG) h')) (by omega)
+    | @orR k _ _ _ h' => exact Op.lift (Op.orR (ih k (by omega) _ (And.right hG) h')) (by omega)
+    | aug _ => exact False.elim hG
+    | gen _ _ => exact False.elim hG
+
+-- κ_{P,Q}(G) ≤ κ_{b⊃a, Q}(G) + κ_P(b ⊃ a), con Q y G de Horn: aditivo
+theorem cost_rule_horn {a b : Nat} {P Q : List F} {G : F} {m n : Nat}
+    (hQ : ∀ D, D ∈ Q → HornC D) (hG : G.horn)
+    (hK : Op m P (.imp (.atm b) (.atm a))) (h : Op n (.imp (.atm b) (.atm a) :: Q) G) :
+    Op (n + m) (P ++ Q) G :=
+  cut_rule_horn hQ (Op.inv_imp hK) n n (Nat.le_refl _) G hG h
+
+/-! ## Varios hechos en caché: cuesta el más caro, no la suma -/
+
+-- P ⊢ₘ a para todo a ∈ A; A, Q ⊢ₙ G ⟹ P, Q ⊢ₘ₊ₙ G
+theorem cut_facts {m : Nat} {P : List F} {A : List Nat} (hP : ∀ a, a ∈ A → Op m P (.atm a)) :
+    ∀ (n : Nat) (Q : List F) (G : F), Op n (A.map F.atm ++ Q) G → Op (m + n) (P ++ Q) G := by
+  have hfl : ∀ D, D ∈ A.map F.atm → Flat D := fun D hD => by
+    cases List.mem_map.mp hD with
+    | intro a ha => exact Or.inl ⟨a, ha.2.symm⟩
+  intro n
+  induction n with
+  | zero => intro Q G h; cases h
+  | succ k ihn =>
+    intro Q G h
+    have inL : ∀ D, D ∈ P → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inl h)
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    show Op (m + k + 1) (P ++ Q) G
+    cases h with
+    | fact e =>
+      cases Elab.split e with
+      | inl e' =>
+        cases List.mem_map.mp (Elab.flat hfl e') with
+        | intro a ha =>
+          have hx := F.atm.inj ha.2
+          rw [← hx]
+          exact Op.mono _ (Op.lift (hP a ha.1) (by omega)) inL
+      | inr e' => exact Op.fact (Elab.mono inR e')
+    | back e h' =>
+      cases Elab.split e with
+      | inl e' =>
+        cases List.mem_map.mp (Elab.flat hfl e') with
+        | intro a ha => cases ha.2
+      | inr e' => exact Op.back (Elab.mono inR e') (ihn Q _ h')
+    | and h₁ h₂ => exact Op.and (ihn Q _ h₁) (ihn Q _ h₂)
+    | orL h' => exact Op.orL (ihn Q _ h')
+    | orR h' => exact Op.orR (ihn Q _ h')
+    | @aug _ _ D G' h' =>
+      have h1 : Op k (A.map F.atm ++ D :: Q) G' := Op.mono k h' (fun E hE => by
+        cases List.mem_cons.mp hE with
+        | inl e => exact List.mem_append.mpr (Or.inr (List.mem_cons.mpr (Or.inl e)))
+        | inr h =>
+          cases List.mem_append.mp h with
+          | inl h' => exact List.mem_append.mpr (Or.inl h')
+          | inr h' => exact List.mem_append.mpr (Or.inr (List.mem_cons.mpr (Or.inr h'))))
+      have d := ihn (D :: Q) G' h1
+      exact Op.aug (Op.mono _ d (fun E hE => by
+        cases List.mem_append.mp hE with
+        | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h')))))
+    | @gen _ _ X G' B hB h' =>
+      cases (show ∃ C, Fresh C (P ++ Q) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro C hC =>
+        have h'' := Op.ren h' (upd id B C)
+        rw [map_ren_away (A.map F.atm ++ Q) hB.1, sub_ren_away (G := G') hB.2] at h''
+        exact Op.gen hC (ihn Q _ h'')
+
+-- κ_K(φ) ≤ max_{a ∈ A} κ_K(a) + κ_{A,K}(φ)
+theorem cost_facts {K : List F} {A : List Nat} {φ : Fm} {m n : Nat}
+    (hA : ∀ a, a ∈ A → Cost K (.atom a) m) (h : Cost (A.map F.atm ++ K) φ n) :
+    Cost K φ (m + n) :=
+  Op.mono _ (cut_facts hA n K (enc φ) h) (fun _ hD => (List.mem_append.mp hD).elim id id)
+
+/-! ## Cadena de canales: el contenido obedece la desigualdad; la profundidad no -/
+
+-- W ⇝ Y ⇝ Z, cada flecha un canal veraz: el destino no sabe más que el origen
+theorem dpi_chain {W Y Z K : List F} (h₁ : Ver (Y ++ K) (W ++ K))
+    (h₂ : Ver (Z ++ K) (Y ++ K)) :
+    (∀ φ, Info K Z φ → Info K Y φ) ∧ (∀ φ, Info K Y φ → supp (W ++ K) φ) ∧
+    Ver (Z ++ K) (W ++ K) :=
+  ⟨fun φ h => ⟨ver_supp h₂ φ (And.left h), And.right h⟩,
+   fun φ h => ver_supp h₁ φ (And.left h), Ver.trans h₂ h₁⟩
+
+-- canal veraz en ambos sentidos (mismo contenido), pero κ baja de k + 1 a 1
+theorem depth_not_dpi (k : Nat) :
+    Ver (.atm k :: chain k) (chain k) ∧ Ver (chain k) (.atm k :: chain k) ∧
+    ¬ Cost (chain k) (.atom k) k ∧ Cost (.atm k :: chain k) (.atom k) 1 :=
+  ⟨Ver.process (K := .atm k) trivial (closed_atm k) ⟨_, chain_upper (k := k) k (Nat.le_refl k)⟩
+      (Ver.refl _),
+   Ver.of_ext (Ext.cons _ _), (chain_cost k).2, chain_shortcut k⟩
+
 end Clausal

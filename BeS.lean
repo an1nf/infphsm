@@ -2727,12 +2727,20 @@ theorem or_choice {L : List Rule} {φ ψ : Form} {Aφ Aψ : List Form}
       cases (hψ L'').mp hψ'' with
       | intro α hα => exact ⟨α, List.mem_append.mpr (Or.inr hα.1), hα.2⟩))
 
+-- forma normal: lista de fórmulas sin ∨ ni ⊥
+def nfL : Form → List Form
+  | .atom p  => [.atom p]
+  | .bot     => []
+  | .and φ ψ => andL (nfL φ) (nfL ψ)
+  | .or φ ψ  => nfL φ ++ nfL ψ
+  | .imp φ ψ => impNF (nfL ψ) (nfL φ)
+
 -- forma normal semántica
-theorem nf_exists (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → nvb α) ∧
-    (harrop φ → A.length ≤ 1) ∧ ∀ L, suppF L φ ↔ ∃ α, α ∈ A ∧ suppF L α := by
+theorem nfL_spec (φ : Form) : (∀ α, α ∈ nfL φ → nvb α) ∧
+    (harrop φ → (nfL φ).length ≤ 1) ∧ ∀ L, suppF L φ ↔ ∃ α, α ∈ nfL φ ∧ suppF L α := by
   induction φ with
   | atom p =>
-    refine ⟨[.atom p], fun α hα => ?_, fun _ => Nat.le_refl _,
+    refine ⟨fun α hα => ?_, fun _ => Nat.le_refl _,
       fun L => ⟨fun h => ⟨.atom p, mem0, h⟩, fun h => ?_⟩⟩
     · cases List.mem_cons.mp hα with
       | inl e => rw [e]; exact True.intro
@@ -2743,52 +2751,45 @@ theorem nf_exists (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → nvb α)
         | inl e => rw [e] at hα; exact hα.2
         | inr h' => exact (mem_nil_false h').elim
   | bot =>
-    refine ⟨[], fun α hα => (mem_nil_false hα).elim, fun _ => Nat.zero_le _,
+    refine ⟨fun α hα => (mem_nil_false hα).elim, fun _ => Nat.zero_le _,
       fun L => ⟨fun h => (finite_bot L h).elim, fun h => ?_⟩⟩
     cases h with
     | intro α hα => exact (mem_nil_false hα.1).elim
   | and φ ψ ihφ ihψ =>
-    cases ihφ with
-    | intro Aφ hAφ =>
-      cases ihψ with
-      | intro Aψ hAψ =>
-        refine ⟨andL Aφ Aψ, andL_nvb hAφ.1 hAψ.1,
-          fun h => andL_len (hAφ.2.1 (And.left h)) (hAψ.2.1 (And.right h)), fun L => ?_⟩
-        rw [andL_supp]
-        show suppF L φ ∧ suppF L ψ ↔ _
-        rw [hAφ.2.2 L, hAψ.2.2 L]
+    refine ⟨andL_nvb ihφ.1 ihψ.1,
+      fun h => andL_len (ihφ.2.1 (And.left h)) (ihψ.2.1 (And.right h)), fun L => ?_⟩
+    show suppF L (.and φ ψ) ↔ ∃ α, α ∈ andL (nfL φ) (nfL ψ) ∧ suppF L α
+    rw [andL_supp]
+    show suppF L φ ∧ suppF L ψ ↔ _
+    rw [ihφ.2.2 L, ihψ.2.2 L]
   | or φ ψ ihφ ihψ =>
-    cases ihφ with
-    | intro Aφ hAφ =>
-      cases ihψ with
-      | intro Aψ hAψ =>
-        refine ⟨Aφ ++ Aψ, fun α hα => (List.mem_append.mp hα).elim (hAφ.1 α) (hAψ.1 α),
-          fun h => False.elim h,
-          fun L => ⟨fun h => or_choice hAφ.1 hAψ.1 hAφ.2.2 hAψ.2.2 h, fun h => ?_⟩⟩
-        cases h with
-        | intro α hα =>
-          cases List.mem_append.mp hα.1 with
-          | inl h1 => exact or_introF₁ ψ ((hAφ.2.2 L).mpr ⟨α, h1, hα.2⟩)
-          | inr h2 => exact or_introF₂ φ ((hAψ.2.2 L).mpr ⟨α, h2, hα.2⟩)
+    refine ⟨fun α hα => (List.mem_append.mp hα).elim (ihφ.1 α) (ihψ.1 α),
+      fun h => False.elim h,
+      fun L => ⟨fun h => or_choice ihφ.1 ihψ.1 ihφ.2.2 ihψ.2.2 h, fun h => ?_⟩⟩
+    cases h with
+    | intro α hα =>
+      cases List.mem_append.mp hα.1 with
+      | inl h1 => exact or_introF₁ ψ ((ihφ.2.2 L).mpr ⟨α, h1, hα.2⟩)
+      | inr h2 => exact or_introF₂ φ ((ihψ.2.2 L).mpr ⟨α, h2, hα.2⟩)
   | imp φ ψ ihφ ihψ =>
-    cases ihφ with
-    | intro Aφ hAφ =>
-      cases ihψ with
-      | intro Aψ hAψ =>
-        refine ⟨impNF Aψ Aφ, impNF_nvb hAφ.1 hAψ.1, fun h => impNF_len (hAψ.2.1 h) Aφ,
-          fun L => ?_⟩
-        rw [impNF_supp]
-        constructor
-        · intro h a ha
-          apply imp_choice (hAφ.1 a ha) hAψ.1
-          intro L' hLL' haL
-          apply (hAψ.2.2 L').mp
-          exact h L' hLL' ((hAφ.2.2 L').mpr ⟨a, ha, haL⟩)
-        · intro h L' hLL' hφL
-          cases (hAφ.2.2 L').mp hφL with
-          | intro a ha =>
-            cases h a ha.1 with
-            | intro b hb => exact (hAψ.2.2 L').mpr ⟨b, hb.1, hb.2 L' hLL' ha.2⟩
+    refine ⟨impNF_nvb ihφ.1 ihψ.1, fun h => impNF_len (ihψ.2.1 h) (nfL φ), fun L => ?_⟩
+    show suppF L (.imp φ ψ) ↔ ∃ α, α ∈ impNF (nfL ψ) (nfL φ) ∧ suppF L α
+    rw [impNF_supp]
+    constructor
+    · intro h a ha
+      apply imp_choice (ihφ.1 a ha) ihψ.1
+      intro L' hLL' haL
+      apply (ihψ.2.2 L').mp
+      exact h L' hLL' ((ihφ.2.2 L').mpr ⟨a, ha, haL⟩)
+    · intro h L' hLL' hφL
+      cases (ihφ.2.2 L').mp hφL with
+      | intro a ha =>
+        cases h a ha.1 with
+        | intro b hb => exact (ihψ.2.2 L').mpr ⟨b, hb.1, hb.2 L' hLL' ha.2⟩
+
+theorem nf_exists (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → nvb α) ∧
+    (harrop φ → A.length ≤ 1) ∧ ∀ L, suppF L φ ↔ ∃ α, α ∈ A ∧ suppF L α :=
+  ⟨nfL φ, nfL_spec φ⟩
 
 -- propiedad de disyunción en cada base finita (GDP)
 theorem finite_gdp {L : List Rule} {φ ψ : Form} (h : suppF L (.or φ ψ)) :
@@ -2877,5 +2878,316 @@ theorem finite_valid_nf (φ : Form) : ∃ A : List Form, (∀ α, α ∈ A → n
       | intro α hα =>
         exact valid_of_nil ((hA.2.2 []).mpr
           ⟨α, hα.1, soundnessF hα.2 [] (fun _ h => (mem_nil_false h).elim)⟩)
+
+/-! ## Conjetura inquisitiva, III: IL + H y el ensamblaje
+  NJH = NJ + H (α de Harrop). En NJH, cada b ∈ nfL ψ implica ψ (ISyn) y α → ψ se
+  divide en los α → b (SSyn); ambas por inducción conjunta, sin ⊥. Con la forma normal
+  semántica: sin ⊥, válida en la clase finita ⟺ teorema de IL + H, la lógica
+  inquisitiva general (Punčochář 2016, Cor. 5). -/
+
+inductive NJH : List Form → Form → Prop where
+  | hyp   {Γ φ}     : φ ∈ Γ → NJH Γ φ
+  | andI  {Γ φ ψ}   : NJH Γ φ → NJH Γ ψ → NJH Γ (.and φ ψ)
+  | andE₁ {Γ φ ψ}   : NJH Γ (.and φ ψ) → NJH Γ φ
+  | andE₂ {Γ φ ψ}   : NJH Γ (.and φ ψ) → NJH Γ ψ
+  | impI  {Γ φ ψ}   : NJH (φ :: Γ) ψ → NJH Γ (.imp φ ψ)
+  | impE  {Γ φ ψ}   : NJH Γ (.imp φ ψ) → NJH Γ φ → NJH Γ ψ
+  | orI₁  {Γ φ ψ}   : NJH Γ φ → NJH Γ (.or φ ψ)
+  | orI₂  {Γ φ ψ}   : NJH Γ ψ → NJH Γ (.or φ ψ)
+  | orE   {Γ φ ψ χ} : NJH Γ (.or φ ψ) → NJH (φ :: Γ) χ → NJH (ψ :: Γ) χ → NJH Γ χ
+  | botE  {Γ φ}     : NJH Γ .bot → NJH Γ φ
+  | ax    {Γ α φ ψ} : harrop α →
+      NJH Γ (.imp (.imp α (.or φ ψ)) (.or (.imp α φ) (.imp α ψ)))
+
+theorem NJH.weaken {Γ : List Form} {φ : Form} (d : NJH Γ φ) :
+    ∀ {Δ : List Form}, (∀ θ, θ ∈ Γ → θ ∈ Δ) → NJH Δ φ := by
+  induction d with
+  | hyp h => intro Δ hΔ; exact NJH.hyp (hΔ _ h)
+  | andI _ _ ih₁ ih₂ => intro Δ hΔ; exact NJH.andI (ih₁ hΔ) (ih₂ hΔ)
+  | andE₁ _ ih => intro Δ hΔ; exact NJH.andE₁ (ih hΔ)
+  | andE₂ _ ih => intro Δ hΔ; exact NJH.andE₂ (ih hΔ)
+  | impI _ ih => intro Δ hΔ; exact NJH.impI (ih (consSub hΔ))
+  | impE _ _ ih₁ ih₂ => intro Δ hΔ; exact NJH.impE (ih₁ hΔ) (ih₂ hΔ)
+  | orI₁ _ ih => intro Δ hΔ; exact NJH.orI₁ (ih hΔ)
+  | orI₂ _ ih => intro Δ hΔ; exact NJH.orI₂ (ih hΔ)
+  | orE _ _ _ ih₀ ih₁ ih₂ =>
+    intro Δ hΔ; exact NJH.orE (ih₀ hΔ) (ih₁ (consSub hΔ)) (ih₂ (consSub hΔ))
+  | botE _ ih => intro Δ hΔ; exact NJH.botE (ih hΔ)
+  | ax h => intro Δ _; exact NJH.ax h
+
+theorem NJH.ofNJ {Γ : List Form} {φ : Form} (d : NJ Γ φ) : NJH Γ φ := by
+  induction d with
+  | hyp h => exact NJH.hyp h
+  | andI _ _ ih₁ ih₂ => exact NJH.andI ih₁ ih₂
+  | andE₁ _ ih => exact NJH.andE₁ ih
+  | andE₂ _ ih => exact NJH.andE₂ ih
+  | impI _ ih => exact NJH.impI ih
+  | impE _ _ ih₁ ih₂ => exact NJH.impE ih₁ ih₂
+  | orI₁ _ ih => exact NJH.orI₁ ih
+  | orI₂ _ ih => exact NJH.orI₂ ih
+  | orE _ _ _ ih₀ ih₁ ih₂ => exact NJH.orE ih₀ ih₁ ih₂
+  | botE _ ih => exact NJH.botE ih
+
+-- corrección de NJH en la clase finita
+theorem soundnessH {Γ : List Form} {φ : Form} (d : NJH Γ φ) : validF Γ φ := by
+  induction d with
+  | @hyp Γ φ h => intro L hΓ; exact hΓ φ h
+  | @andI Γ φ ψ _ _ ih₁ ih₂ =>
+    intro L hΓ; simp only [suppF]; exact ⟨ih₁ L hΓ, ih₂ L hΓ⟩
+  | @andE₁ Γ φ ψ _ ih =>
+    intro L hΓ; have h := ih L hΓ; simp only [suppF] at h; exact h.1
+  | @andE₂ Γ φ ψ _ ih =>
+    intro L hΓ; have h := ih L hΓ; simp only [suppF] at h; exact h.2
+  | @impI Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC hφ
+    apply ih C
+    intro θ hθ
+    cases List.mem_cons.mp hθ with
+    | inl e => subst e; exact hφ
+    | inr h => exact suppF_mono θ hBC (hΓ θ h)
+  | @impE Γ φ ψ _ _ ih₁ ih₂ =>
+    intro L hΓ; have h := ih₁ L hΓ; simp only [suppF] at h
+    exact h L (Ext.refl _) (ih₂ L hΓ)
+  | @orI₁ Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC p k₁ _
+    exact k₁ C (Ext.refl _) (suppF_mono φ hBC (ih L hΓ))
+  | @orI₂ Γ φ ψ _ ih =>
+    intro L hΓ; simp only [suppF]
+    intro C hBC p _ k₂
+    exact k₂ C (Ext.refl _) (suppF_mono ψ hBC (ih L hΓ))
+  | @orE Γ φ ψ χ _ _ _ ih₀ ih₁ ih₂ =>
+    intro L hΓ
+    apply or_elimF φ ψ χ (ih₀ L hΓ)
+    · intro C hBC hφ
+      apply ih₁ C
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hφ
+      | inr h => exact suppF_mono θ hBC (hΓ θ h)
+    · intro C hBC hψ
+      apply ih₂ C
+      intro θ hθ
+      cases List.mem_cons.mp hθ with
+      | inl e => subst e; exact hψ
+      | inr h => exact suppF_mono θ hBC (hΓ θ h)
+  | @botE Γ φ _ ih =>
+    intro L hΓ; exact bot_elimF φ (ih L hΓ)
+  | @ax Γ α φ ψ h =>
+    intro L _; exact finite_H α φ ψ h L (fun _ h' => (mem_nil_false h').elim)
+
+theorem subTl {x : Form} {Γ : List Form} : ∀ θ, θ ∈ Γ → θ ∈ x :: Γ :=
+  fun _ h => List.mem_cons.mpr (Or.inr h)
+
+theorem mem3 {α : Type} {x y z w : α} {l : List α} : w ∈ x :: y :: z :: w :: l :=
+  List.mem_cons.mpr (Or.inr mem2)
+
+theorem NJH.cut {Γ : List Form} {a χ : Form} (d₁ : NJH Γ a) (d₂ : NJH (a :: Γ) χ) :
+    NJH Γ χ :=
+  NJH.impE (NJH.impI d₂) d₁
+
+theorem NJH.wk1 {Γ : List Form} {x φ : Form} (d : NJH Γ φ) : NJH (x :: Γ) φ :=
+  NJH.weaken d subTl
+
+theorem NJH.top {Γ : List Form} : NJH Γ topF := NJH.impI (NJH.hyp mem0)
+
+-- sin ⊥
+def nb : Form → Prop
+  | .atom _  => True
+  | .bot     => False
+  | .and a b => nb a ∧ nb b
+  | .or a b  => nb a ∧ nb b
+  | .imp a b => nb a ∧ nb b
+
+theorem nvb_harrop (a : Form) : nvb a → harrop a := by
+  induction a with
+  | atom _ => intro _; exact True.intro
+  | bot => intro h; exact False.elim h
+  | or _ _ _ _ => intro h; exact False.elim h
+  | and _ _ iha ihb => intro h; exact ⟨iha (And.left h), ihb (And.right h)⟩
+  | imp _ _ _ ihb => intro h; exact ihb (And.right h)
+
+theorem mem_andL {x y : Form} {X Y : List Form} (hx : x ∈ X) (hy : y ∈ Y) :
+    Form.and x y ∈ andL X Y := by
+  induction X with
+  | nil => exact (mem_nil_false hx).elim
+  | cons x' X ih =>
+    cases List.mem_cons.mp hx with
+    | inl e =>
+      rw [e]
+      exact List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨y, hy, rfl⟩))
+    | inr h => exact List.mem_append.mpr (Or.inr (ih h))
+
+theorem mem_andL_inv {γ : Form} {X Y : List Form} (h : γ ∈ andL X Y) :
+    ∃ x y, x ∈ X ∧ y ∈ Y ∧ γ = Form.and x y := by
+  induction X with
+  | nil => exact (mem_nil_false h).elim
+  | cons x' X ih =>
+    cases List.mem_append.mp h with
+    | inl h1 =>
+      cases List.mem_map.mp h1 with
+      | intro y hy => exact ⟨x', y, mem0, hy.1, hy.2.symm⟩
+    | inr h2 =>
+      cases ih h2 with
+      | intro x hx =>
+        cases hx with
+        | intro y hy => exact ⟨x, y, List.mem_cons.mpr (Or.inr hy.1), hy.2.1, hy.2.2⟩
+
+-- cada conjunto de impNF da c → d para cada c
+theorem impNF_proj {B A : List Form} {γ c : Form} (hγ : γ ∈ impNF B A) (hc : c ∈ A) :
+    ∃ d, d ∈ B ∧ ∀ Γ, NJH (γ :: Γ) (.imp c d) := by
+  induction A generalizing γ with
+  | nil => exact (mem_nil_false hc).elim
+  | cons a A ih =>
+    cases mem_andL_inv hγ with
+    | intro x hx =>
+      cases hx with
+      | intro y hy =>
+        cases List.mem_map.mp hy.1 with
+        | intro d₀ hd₀ =>
+          cases List.mem_cons.mp hc with
+          | inl e =>
+            refine ⟨d₀, hd₀.1, fun Γ => ?_⟩
+            have hx' : x = .imp a d₀ := hd₀.2.symm
+            rw [hy.2.2, e, hx']
+            exact NJH.andE₁ (NJH.hyp mem0)
+          | inr h =>
+            cases ih (γ := y) hy.2.1 h with
+            | intro d hd =>
+              refine ⟨d, hd.1, fun Γ => ?_⟩
+              rw [hy.2.2]
+              exact NJH.cut (NJH.andE₂ (NJH.hyp mem0)) (NJH.weaken (hd.2 Γ) (consSub subTl))
+
+-- introducción y división de la forma normal en NJH
+def ISyn (ψ : Form) : Prop := ∀ b, b ∈ nfL ψ → ∀ Γ, NJH (b :: Γ) ψ
+
+def SSyn (ψ : Form) : Prop := ∀ a, nvb a → ∀ Γ χ, NJH Γ (.imp a ψ) →
+  (∀ b, b ∈ nfL ψ → NJH ((.imp a b) :: Γ) χ) → NJH Γ χ
+
+theorem nf_elim_of {ψ : Form} (hS : SSyn ψ) {Γ : List Form} {χ : Form}
+    (h : ∀ b, b ∈ nfL ψ → NJH (b :: Γ) χ) : NJH (ψ :: Γ) χ :=
+  hS topF nvb_top (ψ :: Γ) χ (NJH.impI (NJH.hyp mem1)) (fun b hb =>
+    NJH.cut (NJH.impE (NJH.hyp mem0) NJH.top)
+      (NJH.weaken (h b hb) (consSub (fun θ hθ => subTl θ (subTl θ hθ)))))
+
+-- paso → de la división, por la recursión de impNF
+theorem impS {a ψ : Form} {B : List Form} (ha : nvb a)
+    (hS2 : ∀ a', nvb a' → ∀ Γ χ, NJH Γ (.imp a' ψ) →
+      (∀ d, d ∈ B → NJH ((.imp a' d) :: Γ) χ) → NJH Γ χ)
+    (A : List Form) (hA : ∀ c, c ∈ A → nvb c) : ∀ Γ χ,
+    (∀ c, c ∈ A → NJH Γ (.imp (.and a c) ψ)) →
+    (∀ γ, γ ∈ impNF B A → NJH ((.imp a γ) :: Γ) χ) → NJH Γ χ := by
+  induction A with
+  | nil =>
+    intro Γ χ _ k
+    exact NJH.cut (NJH.impI NJH.top) (k topF mem0)
+  | cons c A ih =>
+    intro Γ χ hp k
+    apply hS2 (.and a c) ⟨ha, hA c mem0⟩ Γ χ (hp c mem0)
+    intro d hd
+    apply ih (fun c' hc' => hA c' (subTl c' hc')) ((.imp (.and a c) d) :: Γ) χ
+      (fun c' hc' => NJH.wk1 (hp c' (subTl c' hc')))
+    intro γ' hγ'
+    have hm : Form.and (.imp c d) γ' ∈ impNF B (c :: A) :=
+      mem_andL (List.mem_map.mpr ⟨d, hd, rfl⟩) hγ'
+    have hk := k _ hm
+    -- a → (c → d) ∧ γ', desde a → γ' y a ∧ c → d
+    have hder : NJH ((.imp a γ') :: (.imp (.and a c) d) :: Γ)
+        (.imp a (.and (.imp c d) γ')) :=
+      NJH.impI (NJH.andI
+        (NJH.impI (NJH.impE (NJH.hyp mem3) (NJH.andI (NJH.hyp mem1) (NJH.hyp mem0))))
+        (NJH.impE (NJH.hyp mem1) (NJH.hyp mem0)))
+    exact NJH.cut hder (NJH.weaken hk (consSub (fun θ hθ => subTl θ (subTl θ hθ))))
+
+theorem nf_syn (ψ : Form) : nb ψ → ISyn ψ ∧ SSyn ψ := by
+  induction ψ with
+  | atom p =>
+    intro _
+    constructor
+    · intro b hb Γ
+      cases List.mem_cons.mp hb with
+      | inl e => rw [e]; exact NJH.hyp mem0
+      | inr h => exact (mem_nil_false h).elim
+    · intro a _ Γ χ h k
+      exact NJH.cut h (k (.atom p) mem0)
+  | bot => intro hb; exact False.elim hb
+  | and φ ψ ihφ ihψ =>
+    intro hb
+    have Iφ := (ihφ (And.left hb)).1
+    have Sφ := (ihφ (And.left hb)).2
+    have Iψ := (ihψ (And.right hb)).1
+    have Sψ := (ihψ (And.right hb)).2
+    constructor
+    · intro b hb' Γ
+      cases mem_andL_inv hb' with
+      | intro x hx =>
+        cases hx with
+        | intro y hy =>
+          rw [hy.2.2]
+          exact NJH.andI (NJH.cut (NJH.andE₁ (NJH.hyp mem0)) (Iφ x hy.1 _))
+            (NJH.cut (NJH.andE₂ (NJH.hyp mem0)) (Iψ y hy.2.1 _))
+    · intro a ha Γ χ h k
+      have hφa : NJH Γ (.imp a φ) :=
+        NJH.impI (NJH.andE₁ (NJH.impE (NJH.wk1 h) (NJH.hyp mem0)))
+      have hψa : NJH Γ (.imp a ψ) :=
+        NJH.impI (NJH.andE₂ (NJH.impE (NJH.wk1 h) (NJH.hyp mem0)))
+      apply Sφ a ha Γ χ hφa
+      intro x hx
+      apply Sψ a ha ((.imp a x) :: Γ) χ (NJH.wk1 hψa)
+      intro y hy
+      have hk := k (.and x y) (mem_andL hx hy)
+      have hder : NJH ((.imp a y) :: (.imp a x) :: Γ) (.imp a (.and x y)) :=
+        NJH.impI (NJH.andI (NJH.impE (NJH.hyp mem2) (NJH.hyp mem0))
+          (NJH.impE (NJH.hyp mem1) (NJH.hyp mem0)))
+      exact NJH.cut hder (NJH.weaken hk (consSub (fun θ hθ => subTl θ (subTl θ hθ))))
+  | or φ ψ ihφ ihψ =>
+    intro hb
+    have Iφ := (ihφ (And.left hb)).1
+    have Sφ := (ihφ (And.left hb)).2
+    have Iψ := (ihψ (And.right hb)).1
+    have Sψ := (ihψ (And.right hb)).2
+    constructor
+    · intro b hb' Γ
+      cases List.mem_append.mp hb' with
+      | inl h1 => exact NJH.orI₁ (Iφ b h1 Γ)
+      | inr h2 => exact NJH.orI₂ (Iψ b h2 Γ)
+    · intro a ha Γ χ h k
+      have hH : NJH Γ (.or (.imp a φ) (.imp a ψ)) := NJH.impE (NJH.ax (nvb_harrop a ha)) h
+      exact NJH.orE hH
+        (Sφ a ha _ χ (NJH.hyp mem0) (fun b hb' =>
+          NJH.weaken (k b (List.mem_append.mpr (Or.inl hb'))) (consSub subTl)))
+        (Sψ a ha _ χ (NJH.hyp mem0) (fun b hb' =>
+          NJH.weaken (k b (List.mem_append.mpr (Or.inr hb'))) (consSub subTl)))
+  | imp φ ψ ihφ ihψ =>
+    intro hb
+    have Iφ := (ihφ (And.left hb)).1
+    have Sφ := (ihφ (And.left hb)).2
+    have Iψ := (ihψ (And.right hb)).1
+    have Sψ := (ihψ (And.right hb)).2
+    constructor
+    · intro γ hγ Γ
+      apply NJH.impI
+      apply nf_elim_of Sφ
+      intro c hc
+      cases impNF_proj hγ hc with
+      | intro d hd =>
+        exact NJH.cut (NJH.impE (NJH.weaken (hd.2 Γ) subTl) (NJH.hyp mem0)) (Iψ d hd.1 _)
+    · intro a ha Γ χ h k
+      refine impS ha Sψ (nfL φ) (nfL_spec φ).1 Γ χ ?_ k
+      intro c hc
+      exact NJH.impI (NJH.impE (NJH.impE (NJH.wk1 h) (NJH.andE₁ (NJH.hyp mem0)))
+        (NJH.cut (NJH.andE₂ (NJH.hyp mem0)) (Iφ c hc _)))
+
+-- sin ⊥: válida en la clase finita ⟺ teorema de IL + H
+theorem finite_inquisitive (φ : Form) (hb : nb φ) : validF [] φ ↔ NJH [] φ := by
+  constructor
+  · intro hv
+    cases ((nfL_spec φ).2.2 []).mp (hv [] (fun _ h => (mem_nil_false h).elim)) with
+    | intro b hb' =>
+      have hnj : NJ [] b := finite_complete_nvb (fun _ h => (mem_nil_false h).elim)
+        ((nfL_spec φ).1 b hb'.1) (valid_of_nil hb'.2)
+      exact NJH.cut (NJH.ofNJ hnj) ((nf_syn φ hb).1 b hb'.1 [])
+  · exact soundnessH
 
 end BeS

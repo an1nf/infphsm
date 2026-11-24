@@ -2509,4 +2509,1595 @@ theorem depth_not_dpi (k : Nat) :
       (Ver.refl _),
    Ver.of_ext (Ext.cons _ _), (chain_cost k).2, chain_shortcut k⟩
 
+/-! ## Techo cuadrático sin ∀ (H16)
+  Γ: objetivos alcanzables; U: cláusulas que Augment puede añadir.
+  Por programa, etapas de un punto fijo sobre Γ; inducción en las cláusulas de U que faltan. -/
+
+noncomputable def ind (p : Prop) : Nat := @ite Nat p (Classical.propDecidable p) 1 0
+
+theorem ind_pos {p : Prop} (h : p) : ind p = 1 := by
+  unfold ind; split
+  · rfl
+  · contradiction
+
+theorem ind_neg {p : Prop} (h : ¬ p) : ind p = 0 := by
+  unfold ind; split
+  · contradiction
+  · rfl
+
+theorem ind_le_one (p : Prop) : ind p ≤ 1 := by
+  cases Classical.em p with
+  | inl h => rw [ind_pos h]; exact Nat.le_refl 1
+  | inr h => rw [ind_neg h]; exact Nat.zero_le 1
+
+theorem ind_mono {p q : Prop} (h : p → q) : ind p ≤ ind q := by
+  cases Classical.em p with
+  | inl hp => rw [ind_pos hp, ind_pos (h hp)]; exact Nat.le_refl 1
+  | inr hp => rw [ind_neg hp]; exact Nat.zero_le _
+
+-- miembros de L que cumplen E
+noncomputable def cntL (E : F → Prop) : List F → Nat
+  | []     => 0
+  | G :: L => ind (E G) + cntL E L
+
+theorem cnt_le_len (E : F → Prop) : ∀ L : List F, cntL E L ≤ L.length
+  | [] => Nat.le_refl 0
+  | G :: L => by
+    have h1 := ind_le_one (E G)
+    have h2 := cnt_le_len E L
+    show ind (E G) + cntL E L ≤ L.length + 1
+    omega
+
+theorem cnt_mono {E E' : F → Prop} : ∀ (L : List F), (∀ G, G ∈ L → E G → E' G) →
+    cntL E L ≤ cntL E' L
+  | [], _ => Nat.le_refl 0
+  | G :: L, h => by
+    have h1 := ind_mono (h G mem0)
+    have h2 := cnt_mono L (fun G' hG' => h G' (List.mem_cons.mpr (Or.inr hG')))
+    show ind (E G) + cntL E L ≤ ind (E' G) + cntL E' L
+    omega
+
+theorem cnt_lt {E E' : F → Prop} : ∀ (L : List F), (∀ G, G ∈ L → E G → E' G) →
+    ∀ G₀, G₀ ∈ L → E' G₀ → ¬ E G₀ → cntL E L < cntL E' L
+  | [], _, _, h0, _, _ => by cases h0
+  | G :: L, h, G₀, h0, h1, h2 => by
+    show ind (E G) + cntL E L < ind (E' G) + cntL E' L
+    have hm := cnt_mono L (fun G' hG' => h G' (List.mem_cons.mpr (Or.inr hG')))
+    cases List.mem_cons.mp h0 with
+    | inl e =>
+      rw [e] at h1 h2
+      rw [ind_neg h2, ind_pos h1]
+      omega
+    | inr h0' =>
+      have hl := cnt_lt L (fun G' hG' => h G' (List.mem_cons.mpr (Or.inr hG'))) G₀ h0' h1 h2
+      have hi := ind_mono (h G mem0)
+      omega
+
+theorem cnt_full {E : F → Prop} : ∀ (L : List F), L.length ≤ cntL E L → ∀ G, G ∈ L → E G
+  | [], _, _, h0 => by cases h0
+  | G :: L, h, G', h0 => by
+    have h1 := ind_le_one (E G)
+    have h2 := cnt_le_len E L
+    have h' : L.length + 1 ≤ ind (E G) + cntL E L := h
+    cases List.mem_cons.mp h0 with
+    | inl e =>
+      rw [e]
+      exact Classical.byContradiction (fun hn => by rw [ind_neg hn] at h'; omega)
+    | inr h0' => exact cnt_full L (by omega) G' h0'
+
+-- cláusulas de U que faltan en S
+noncomputable def miss (S : List F) : List F → Nat
+  | []     => 0
+  | D :: U => ind (D ∉ S) + miss S U
+
+theorem miss_le_len (S : List F) : ∀ U : List F, miss S U ≤ U.length
+  | [] => Nat.le_refl 0
+  | D :: U => by
+    have h1 := ind_le_one (D ∉ S)
+    have h2 := miss_le_len S U
+    show ind (D ∉ S) + miss S U ≤ U.length + 1
+    omega
+
+theorem miss_cons (D' : F) (S : List F) : ∀ U : List F, miss (D' :: S) U ≤ miss S U
+  | [] => Nat.le_refl 0
+  | D :: U => by
+    have h1 : ind (D ∉ D' :: S) ≤ ind (D ∉ S) :=
+      ind_mono (fun h h' => h (List.mem_cons.mpr (Or.inr h')))
+    have h2 := miss_cons D' S U
+    show ind (D ∉ D' :: S) + miss (D' :: S) U ≤ ind (D ∉ S) + miss S U
+    omega
+
+theorem miss_lt {D : F} {S : List F} (hS : D ∉ S) :
+    ∀ U : List F, D ∈ U → miss (D :: S) U < miss S U
+  | [], h => by cases h
+  | E :: U, h => by
+    show ind (E ∉ D :: S) + miss (D :: S) U < ind (E ∉ S) + miss S U
+    have h2 := miss_cons D S U
+    have h1 : ind (E ∉ D :: S) ≤ ind (E ∉ S) :=
+      ind_mono (fun h h' => h (List.mem_cons.mpr (Or.inr h')))
+    cases List.mem_cons.mp h with
+    | inl e =>
+      rw [← e, ind_neg (p := D ∉ D :: S) (fun h' => h' mem0), ind_pos hS]
+      omega
+    | inr h' =>
+      have h3 := miss_lt hS U h'
+      omega
+
+-- clausura: objetivos sin ∀, subobjetivos, cuerpos tras la elaboración
+structure Clo (P0 U Γ : List F) : Prop where
+  noall : ∀ X G, F.all X G ∉ Γ
+  andc  : ∀ G₁ G₂, F.and G₁ G₂ ∈ Γ → G₁ ∈ Γ ∧ G₂ ∈ Γ
+  orc   : ∀ G₁ G₂, F.or G₁ G₂ ∈ Γ → G₁ ∈ Γ ∧ G₂ ∈ Γ
+  impc  : ∀ D G, F.imp D G ∈ Γ → D ∈ U ∧ G ∈ Γ
+  body  : ∀ G A, Elab (P0 ++ U) (.imp G (.atm A)) → G ∈ Γ
+
+-- un paso; Augment con D ∉ S sale del programa
+abbrev step (S : List F) (E : F → Prop) (G : F) : Prop :=
+  (∃ A, G = .atm A ∧ Elab S (.atm A)) ∨
+  (∃ G' A, G = .atm A ∧ Elab S (.imp G' (.atm A)) ∧ E G') ∨
+  (∃ G₁ G₂, G = .and G₁ G₂ ∧ E G₁ ∧ E G₂) ∨
+  (∃ G₁ G₂, G = .or G₁ G₂ ∧ (E G₁ ∨ E G₂)) ∨
+  (∃ D G', G = .imp D G' ∧ ((D ∈ S ∧ E G') ∨ (D ∉ S ∧ Der (D :: S) G')))
+
+def stage (S : List F) : Nat → F → Prop
+  | 0     => fun _ => False
+  | k + 1 => step S (stage S k)
+
+theorem step_mono {S : List F} {E E' : F → Prop} (h : ∀ G, E G → E' G) :
+    ∀ G, step S E G → step S E' G := by
+  intro G hs
+  rcases hs with ⟨A, e, ea⟩ | ⟨G', A, e, ea, h1⟩ | ⟨G₁, G₂, e, h1, h2⟩ | ⟨G₁, G₂, e, h1⟩ |
+    ⟨D, G', e, h1⟩
+  · exact Or.inl ⟨A, e, ea⟩
+  · exact Or.inr (Or.inl ⟨G', A, e, ea, h G' h1⟩)
+  · exact Or.inr (Or.inr (Or.inl ⟨G₁, G₂, e, h G₁ h1, h G₂ h2⟩))
+  · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨G₁, G₂, e,
+      h1.elim (fun h' => Or.inl (h G₁ h')) (fun h' => Or.inr (h G₂ h'))⟩)))
+  · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨D, G', e,
+      h1.elim (fun h' => Or.inl ⟨h'.1, h G' h'.2⟩) Or.inr⟩)))
+
+-- monotonía relativa a Γ
+theorem step_monoΓ {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U)
+    {E E' : F → Prop} (h : ∀ G, G ∈ Γ → E G → E' G) :
+    ∀ G, G ∈ Γ → step S E G → step S E' G := by
+  intro G hG hs
+  rcases hs with ⟨A, e, ea⟩ | ⟨G', A, e, ea, h1⟩ | ⟨G₁, G₂, e, h1, h2⟩ | ⟨G₁, G₂, e, h1⟩ |
+    ⟨D, G', e, h1⟩
+  · exact Or.inl ⟨A, e, ea⟩
+  · exact Or.inr (Or.inl ⟨G', A, e, ea, h G' (clo.body G' A (Elab.mono hS ea)) h1⟩)
+  · rw [e] at hG
+    have hc := clo.andc G₁ G₂ hG
+    exact Or.inr (Or.inr (Or.inl ⟨G₁, G₂, e, h G₁ hc.1 h1, h G₂ hc.2 h2⟩))
+  · rw [e] at hG
+    have hc := clo.orc G₁ G₂ hG
+    exact Or.inr (Or.inr (Or.inr (Or.inl ⟨G₁, G₂, e,
+      h1.elim (fun h' => Or.inl (h G₁ hc.1 h')) (fun h' => Or.inr (h G₂ hc.2 h'))⟩)))
+  · rw [e] at hG
+    have hc := clo.impc D G' hG
+    exact Or.inr (Or.inr (Or.inr (Or.inr ⟨D, G', e,
+      h1.elim (fun h' => Or.inl ⟨h'.1, h G' hc.2 h'.2⟩) Or.inr⟩)))
+
+theorem stage_succ (S : List F) : ∀ k G, stage S k G → stage S (k + 1) G
+  | 0, _, h => False.elim h
+  | k + 1, G, h => by
+    show step S (stage S (k + 1)) G
+    exact step_mono (E := stage S k) (fun G' h' => stage_succ S k G' h') G h
+
+theorem stage_add (S : List F) (k : Nat) : ∀ i G, stage S k G → stage S (k + i) G
+  | 0, _, h => h
+  | i + 1, G, h => stage_succ S (k + i) G (stage_add S k i G h)
+
+theorem stage_le {S : List F} {k j : Nat} (hkj : k ≤ j) {G : F} (h : stage S k G) :
+    stage S j G := by
+  have e : j = k + (j - k) := by omega
+  rw [e]
+  exact stage_add S k (j - k) G h
+
+-- derivación de altura k ⟹ etapa k
+theorem op_stage {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U) :
+    ∀ k G, G ∈ Γ → Op k S G → stage S k G := by
+  intro k
+  induction k with
+  | zero => intro G _ h; cases h
+  | succ k ih =>
+    intro G hG h
+    show step S (stage S k) G
+    cases h with
+    | fact e => exact Or.inl ⟨_, rfl, e⟩
+    | @back _ _ G' _ e h' =>
+      exact Or.inr (Or.inl ⟨G', _, rfl, e, ih G' (clo.body G' _ (Elab.mono hS e)) h'⟩)
+    | and h₁ h₂ =>
+      have hc := clo.andc _ _ hG
+      exact Or.inr (Or.inr (Or.inl ⟨_, _, rfl, ih _ hc.1 h₁, ih _ hc.2 h₂⟩))
+    | orL h' =>
+      have hc := clo.orc _ _ hG
+      exact Or.inr (Or.inr (Or.inr (Or.inl ⟨_, _, rfl, Or.inl (ih _ hc.1 h')⟩)))
+    | orR h' =>
+      have hc := clo.orc _ _ hG
+      exact Or.inr (Or.inr (Or.inr (Or.inl ⟨_, _, rfl, Or.inr (ih _ hc.2 h')⟩)))
+    | @aug _ _ D G' h' =>
+      have hc := clo.impc _ _ hG
+      cases Classical.em (D ∈ S) with
+      | inl hD =>
+        have h'' : Op k S G' := Op.mono k h' (fun E hE => by
+          cases List.mem_cons.mp hE with
+          | inl e => rw [e]; exact hD
+          | inr h => exact h)
+        exact Or.inr (Or.inr (Or.inr (Or.inr ⟨D, G', rfl, Or.inl ⟨hD, ih G' hc.2 h''⟩⟩)))
+      | inr hD => exact Or.inr (Or.inr (Or.inr (Or.inr ⟨D, G', rfl, Or.inr ⟨hD, k, h'⟩⟩)))
+    | gen _ _ => exact absurd hG (clo.noall _ _)
+
+-- etapa k ⟹ altura k + H, si Augment fuera de S cuesta ≤ H
+theorem stage_op {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U)
+    {H : Nat} (hH : ∀ D G', D ∈ U → D ∉ S → G' ∈ Γ → Der (D :: S) G' → Op H (D :: S) G') :
+    ∀ k G, G ∈ Γ → stage S k G → Op (k + H) S G := by
+  intro k
+  induction k with
+  | zero => intro G _ h; exact False.elim h
+  | succ k ih =>
+    intro G hG h
+    have up : ∀ {G'}, Op (k + H + 1) S G' → Op (k + 1 + H) S G' := fun d => Op.lift d (by omega)
+    rcases h with ⟨A, e, ea⟩ | ⟨G', A, e, ea, h1⟩ | ⟨G₁, G₂, e, h1, h2⟩ | ⟨G₁, G₂, e, h1⟩ |
+      ⟨D, G', e, h1⟩
+    · rw [e]
+      exact up (Op.fact ea)
+    · rw [e]
+      exact up (Op.back ea (ih G' (clo.body G' A (Elab.mono hS ea)) h1))
+    · rw [e] at hG ⊢
+      have hc := clo.andc G₁ G₂ hG
+      exact up (Op.and (ih G₁ hc.1 h1) (ih G₂ hc.2 h2))
+    · rw [e] at hG ⊢
+      have hc := clo.orc G₁ G₂ hG
+      cases h1 with
+      | inl h' => exact up (Op.orL (ih G₁ hc.1 h'))
+      | inr h' => exact up (Op.orR (ih G₂ hc.2 h'))
+    · rw [e] at hG ⊢
+      have hc := clo.impc D G' hG
+      cases h1 with
+      | inl h' =>
+        exact up (Op.aug (Op.mono _ (ih G' hc.2 h'.2)
+          (fun E hE => List.mem_cons.mpr (Or.inr hE))))
+      | inr h' =>
+        exact Op.lift (Op.aug (hH D G' hc.1 h'.1 hc.2 h'.2)) (by omega)
+
+abbrev StableAt (S Γ : List F) (k : Nat) : Prop :=
+  ∀ G, G ∈ Γ → stage S (k + 1) G → stage S k G
+
+theorem stable_add {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U)
+    {k : Nat} (hk : StableAt S Γ k) : ∀ i G, G ∈ Γ → stage S (k + i) G → stage S k G := by
+  intro i
+  induction i with
+  | zero => intro G _ h; exact h
+  | succ i ih =>
+    intro G hG h
+    have h' : step S (stage S (k + i)) G := h
+    exact hk G hG (step_monoΓ clo hS ih G hG h')
+
+-- o la cuenta crece en cada etapa, o se estabiliza antes
+theorem count_or_stable {Γ S : List F} :
+    ∀ k, k ≤ cntL (stage S k) Γ ∨ ∃ k', k' ≤ k ∧ StableAt S Γ k' := by
+  intro k
+  induction k with
+  | zero => exact Or.inl (Nat.zero_le _)
+  | succ k ih =>
+    cases ih with
+    | inr h =>
+      cases h with
+      | intro k' hk => exact Or.inr ⟨k', Nat.le_succ_of_le hk.1, hk.2⟩
+    | inl h =>
+      cases Classical.em (StableAt S Γ k) with
+      | inl hs => exact Or.inr ⟨k, Nat.le_succ k, hs⟩
+      | inr hs =>
+        have hw : ∃ G, G ∈ Γ ∧ stage S (k + 1) G ∧ ¬ stage S k G :=
+          Classical.byContradiction (fun hn => hs (fun G hG h1 =>
+            Classical.byContradiction (fun h2 => hn ⟨G, hG, h1, h2⟩)))
+        cases hw with
+        | intro G hG =>
+          have hl := cnt_lt Γ (fun G' _ h' => stage_succ S k G' h') G hG.1 hG.2.1 hG.2.2
+          exact Or.inl (by omega)
+
+-- toda etapa queda dentro de la etapa |Γ|
+theorem stab {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U) :
+    ∀ k G, G ∈ Γ → stage S k G → stage S Γ.length G := by
+  intro k G hG h
+  cases count_or_stable (S := S) (Γ := Γ) Γ.length with
+  | inl hc => exact cnt_full Γ hc G hG
+  | inr hc =>
+    cases hc with
+    | intro k' hk =>
+      cases Nat.le_total k k' with
+      | inl hle => exact stage_le hk.1 (stage_le hle h)
+      | inr hle =>
+        have e : k = k' + (k - k') := by omega
+        rw [e] at h
+        exact stage_le hk.1 (stable_add clo hS hk.2 (k - k') G hG h)
+
+theorem ceiling_step {P0 U Γ S : List F} (clo : Clo P0 U Γ) (hS : ∀ D, D ∈ S → D ∈ P0 ++ U)
+    (hH : ∀ D G', D ∈ U → D ∉ S → G' ∈ Γ → Der (D :: S) G' →
+      Op (miss S U * Γ.length) (D :: S) G') :
+    ∀ G, G ∈ Γ → Der S G → Op ((miss S U + 1) * Γ.length) S G := by
+  intro G hG hd
+  cases hd with
+  | intro k hk =>
+    have h1 := stab clo hS k G hG (op_stage clo hS k G hG hk)
+    have h2 := stage_op clo hS hH Γ.length G hG h1
+    have e : (miss S U + 1) * Γ.length = Γ.length + miss S U * Γ.length := by
+      rw [Nat.right_distrib, Nat.one_mul]; omega
+    rw [e]; exact h2
+
+-- inducción en el número de cláusulas de U que faltan
+theorem ceiling {P0 U Γ : List F} (clo : Clo P0 U Γ) :
+    ∀ N S, miss S U ≤ N → (∀ D, D ∈ S → D ∈ P0 ++ U) →
+      ∀ G, G ∈ Γ → Der S G → Op ((miss S U + 1) * Γ.length) S G := by
+  intro N
+  induction N with
+  | zero =>
+    intro S hN hS
+    exact ceiling_step clo hS (fun D _ hU hD _ _ => absurd (miss_lt hD U hU) (by omega))
+  | succ N ih =>
+    intro S hN hS
+    exact ceiling_step clo hS (fun D G' hU hD hG' hd => by
+      have hlt := miss_lt hD U hU
+      have hS' : ∀ E, E ∈ D :: S → E ∈ P0 ++ U := fun E hE => by
+        cases List.mem_cons.mp hE with
+        | inl e => rw [e]; exact List.mem_append.mpr (Or.inr hU)
+        | inr h => exact hS E h
+      have d := ih (D :: S) (by omega) hS' G' hG' hd
+      exact Op.lift d (Nat.mul_le_mul (by omega) (Nat.le_refl _)))
+
+-- H16: sin ∀, κ_P(G) ≤ (1 + |U|)·|Γ|
+theorem ceiling_cost {P0 U Γ : List F} (clo : Clo P0 U Γ) {G : F} (hG : G ∈ Γ)
+    (hd : Der P0 G) : Op ((U.length + 1) * Γ.length) P0 G :=
+  Op.lift (ceiling clo _ P0 (Nat.le_refl _) (fun _ hD => List.mem_append.mpr (Or.inl hD)) G hG hd)
+    (Nat.mul_le_mul (Nat.succ_le_succ (miss_le_len P0 U)) (Nat.le_refl _))
+
+/-! ## A_{m,t} sin K: κ(c_t) = (m+5)t + 1 -/
+
+-- d₀ derivado en altura k ⟹ d_i en altura k + i
+theorem amp_chain' (m t : Nat) {P : List F} (hP : ∀ D, D ∈ amp m t → D ∈ P) {k : Nat}
+    (h0 : Op k P (.atm 2)) : ∀ i, i ≤ m + 1 → Op (k + i) P (.atm (3 * i + 2)) := by
+  intro i
+  induction i with
+  | zero => intro _; exact h0
+  | succ i ih =>
+    intro hi
+    have hm : F.imp (.atm (3 * i + 2)) (.atm (3 * (i + 1) + 2)) ∈ P :=
+      hP _ (List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl (dch_mem (by omega))))))
+    exact Op.back (Elab.mem hm) (ih (by omega))
+
+theorem amp_upper0 (m t : Nat) : ∀ j, j ≤ t → ∀ (P : List F),
+    (∀ D, D ∈ amp m t → D ∈ P) → Op ((m + 5) * j + 1) P (.atm (3 * j)) := by
+  intro j
+  induction j with
+  | zero =>
+    intro _ P hP
+    exact Op.fact (Elab.mem (hP _ mem0))
+  | succ j ih =>
+    intro hj P hP
+    have inA : ∀ D, D ∈ rds m t → D ∈ P := fun D hD =>
+      hP D (List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr hD))))
+    have hC := inA _ (rds_memC (m := m) (by omega : j < t))
+    have hB := inA _ (rds_memB (m := m) (by omega : j < t))
+    have hP' : ∀ D, D ∈ amp m t → D ∈ F.atm (3 * (j + 1) + 1) :: P :=
+      fun D hD => List.mem_cons.mpr (Or.inr (hP D hD))
+    have d := ih (by omega) _ hP'
+    have d1 : Op ((m + 5) * j + 1) (F.atm (3 * (j + 1) + 1) :: P) (.atm (3 * (j + 1) + 1)) :=
+      Op.lift (Op.fact (n := 0) (Elab.mem mem0)) (by omega)
+    have d2 := Op.and d1 d
+    have d3 := Op.back (Elab.mem (List.mem_cons.mpr (Or.inr hB))) d2
+    have d4 := amp_chain' m t hP' d3 (m + 1) (Nat.le_refl _)
+    have d5 := Op.aug d4
+    have d6 := Op.back (Elab.mem hC) d5
+    have e : (m + 5) * (j + 1) = (m + 5) * j + (m + 5) := by
+      rw [Nat.left_distrib, Nat.mul_one]
+    exact Op.lift d6 (by omega)
+
+theorem amp_exact (m t : Nat) :
+    Op ((m + 5) * t + 1) (amp m t) (.atm (3 * t)) ∧
+    ¬ Op (lb (m + 5) t) (amp m t) (.atm (3 * t)) :=
+  ⟨amp_upper0 m t t (Nat.le_refl _) _ (fun _ h => h), (amplification m t).2.2.2⟩
+
+/-! ## Lemas de orden 2 (H10)
+  K = (c ⊃ b) ⊃ a. Con c en el programa, K actúa como b ⊃ a;
+  el primer uso de K en una rama paga el lema (β + 1) veces. -/
+
+abbrev cl2 (a b c : Nat) : F := .imp (.imp (.atm c) (.atm b)) (.atm a)
+
+theorem mem_swap {X Y D : F} {P : List F} (h : D ∈ X :: Y :: P) : D ∈ Y :: X :: P := by
+  cases List.mem_cons.mp h with
+  | inl e => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl e)))
+  | inr h' =>
+    cases List.mem_cons.mp h' with
+    | inl e => exact List.mem_cons.mpr (Or.inl e)
+    | inr h'' => exact List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr h'')))
+
+-- c ⊃ b puede cambiarse por el hecho b
+theorem J_to_b {b c : Nat} : ∀ n {P : List F} {G : F},
+    Op n (.imp (.atm c) (.atm b) :: P) G → Op n (.atm b :: P) G := by
+  intro n
+  induction n with
+  | zero => intro _ _ h; cases h
+  | succ k ih =>
+    intro P G h
+    have inR : ∀ D, D ∈ P → D ∈ F.atm b :: P := fun D h => List.mem_cons.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      cases Elab.split (L₁ := [.imp (.atm c) (.atm b)]) (L₂ := P) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact Op.fact (Elab.mono inR e')
+    | @back _ _ G' A e d =>
+      cases Elab.split (L₁ := [.imp (.atm c) (.atm b)]) (L₂ := P) e with
+      | inl e' =>
+        rw [F.atm.inj (F.imp.inj (Elab.clause_only e')).2]
+        exact Op.fact (Elab.mem mem0)
+      | inr e' => exact Op.back (Elab.mono inR e') (ih d)
+    | and d₁ d₂ => exact Op.and (ih d₁) (ih d₂)
+    | orL d => exact Op.orL (ih d)
+    | orR d => exact Op.orR (ih d)
+    | @aug _ _ D G' d =>
+      have d1 : Op k (.atm b :: D :: P) G' := ih (Op.mono k d (fun E hE => mem_swap hE))
+      exact Op.aug (Op.mono k d1 (fun E hE => mem_swap hE))
+    | @gen _ _ X G' A hA d =>
+      have hA' : Fresh A (.atm b :: P) (.all X G') := ⟨fun D hD hocc => by
+          cases List.mem_cons.mp hD with
+          | inl e =>
+            rw [e] at hocc
+            exact hA.1 _ mem0 (Or.inr hocc)
+          | inr h' => exact hA.1 D (List.mem_cons.mpr (Or.inr h')) hocc, hA.2⟩
+      exact Op.gen hA' (ih d)
+
+-- con c en R, K actúa como b ⊃ a (sin aumentar altura ni Augment)
+theorem swap_K {a b c : Nat} : ∀ n {α : Nat} {R : List F} {G : F}, F.atm c ∈ R →
+    OpA n α (cl2 a b c :: R) G → OpA n α (.imp (.atm b) (.atm a) :: R) G := by
+  intro n
+  induction n with
+  | zero => intro _ _ _ _ h; cases h
+  | succ k ih =>
+    intro α R G hc h
+    have inR : ∀ D, D ∈ R → D ∈ F.imp (.atm b) (.atm a) :: R :=
+      fun D h => List.mem_cons.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      cases Elab.split (L₁ := [cl2 a b c]) (L₂ := R) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact OpA.fact (Elab.mono inR e')
+    | @back _ _ _ G' A e d =>
+      cases Elab.split (L₁ := [cl2 a b c]) (L₂ := R) e with
+      | inr e' => exact OpA.back (Elab.mono inR e') (ih hc d)
+      | inl e' =>
+        have hx := F.imp.inj (Elab.clause_only e')
+        rw [F.atm.inj hx.2]
+        rw [hx.1] at d
+        cases d with
+        | @aug _ β _ _ _ d' =>
+          have d1 : OpA _ β (cl2 a b c :: R) (.atm b) := OpA.mono _ d' (fun E hE => by
+            cases List.mem_cons.mp hE with
+            | inl e => rw [e]; exact List.mem_cons.mpr (Or.inr hc)
+            | inr h' => exact h')
+          have d2 := ih hc (OpA.lift d1 (Nat.le_succ _) (Nat.le_refl β))
+          exact OpA.lift (OpA.back (Elab.mem mem0) d2) (Nat.le_refl _) (Nat.le_succ β)
+    | and d₁ d₂ => exact OpA.and (ih hc d₁) (ih hc d₂)
+    | orL d => exact OpA.orL (ih hc d)
+    | orR d => exact OpA.orR (ih hc d)
+    | @aug _ _ _ D G' d =>
+      have d1 : OpA k _ (.imp (.atm b) (.atm a) :: D :: R) G' :=
+        ih (List.mem_cons.mpr (Or.inr hc)) (OpA.mono k d (fun E hE => mem_swap hE))
+      exact OpA.aug (OpA.mono k d1 (fun E hE => mem_swap hE))
+    | @gen _ _ _ X G' A hA d =>
+      have hA' : Fresh A (.imp (.atm b) (.atm a) :: R) (.all X G') := ⟨fun D hD hocc => by
+          cases List.mem_cons.mp hD with
+          | inl e =>
+            rw [e] at hocc
+            exact hA.1 _ mem0 ((hocc : F.occ A (.atm b) ∨ F.occ A (.atm a)).elim
+              (fun h' => Or.inl (Or.inr h')) Or.inr)
+          | inr h' => exact hA.1 D (List.mem_cons.mpr (Or.inr h')) hocc, hA.2⟩
+      exact OpA.gen hA' (ih hc d)
+
+theorem Nb_succ (m β x : Nat) : m + x * (β + 1) + 1 ≤ m + (x + 1) * (β + 1) := by
+  have e : (x + 1) * (β + 1) = x * (β + 1) + (β + 1) := by
+    rw [Nat.right_distrib, Nat.one_mul]
+  omega
+
+theorem Nb_mono (m β : Nat) {x y : Nat} (h : x ≤ y) : m + x * (β + 1) ≤ m + y * (β + 1) := by
+  have := Nat.mul_le_mul h (Nat.le_refl (β + 1))
+  omega
+
+theorem bound_K (m β k α : Nat) :
+    m + (k + m * α + m) * β + (k + m * α + m) ≤ m + (k + 1 + 1 + m * (α + 1)) * (β + 1) := by
+  have e1 : (k + m * α + m) * (β + 1) = (k + m * α + m) * β + (k + m * α + m) := by
+    rw [Nat.left_distrib, Nat.mul_one]
+  have e2 : m * (α + 1) = m * α + m := by rw [Nat.left_distrib, Nat.mul_one]
+  have h := Nat.mul_le_mul (show k + m * α + m ≤ k + 1 + 1 + m * (α + 1) by omega)
+    (Nat.le_refl (β + 1))
+  omega
+
+-- P, (c ⊃ b) ⊢ᵐ_β a  y  K, Q ⊢ⁿ_α G  ⟹  P, Q ⊢^{m + (n + mα)(β + 1)} G
+theorem cut_order2 {a b c m β : Nat} {P : List F}
+    (hL : OpA m β (.imp (.atm c) (.atm b) :: P) (.atm a)) :
+    ∀ n {α : Nat} {Q : List F} {G : F}, OpA n α (cl2 a b c :: Q) G →
+      Op (m + (n + m * α) * (β + 1)) (P ++ Q) G := by
+  have hb : Op m (.atm b :: P) (.atm a) := J_to_b m (OpA.toOp hL)
+  intro n
+  induction n with
+  | zero => intro _ _ _ h; cases h
+  | succ k ih =>
+    intro α Q G h
+    have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+    have up : ∀ {G'}, Op (m + (k + m * α) * (β + 1) + 1) (P ++ Q) G' →
+        Op (m + (k + 1 + m * α) * (β + 1)) (P ++ Q) G' := fun d =>
+      Op.lift d (Nat.le_trans (Nb_succ m β _) (Nb_mono m β (by omega)))
+    cases h with
+    | fact e =>
+      cases Elab.split (L₁ := [cl2 a b c]) (L₂ := Q) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact up (Op.fact (Elab.mono inR e'))
+    | @back _ _ _ G' A e d =>
+      cases Elab.split (L₁ := [cl2 a b c]) (L₂ := Q) e with
+      | inr e' => exact up (Op.back (Elab.mono inR e') (ih d))
+      | inl e' =>
+        have hx := F.imp.inj (Elab.clause_only e')
+        rw [F.atm.inj hx.2]
+        rw [hx.1] at d
+        cases d with
+        | @aug k' α' _ _ _ d' =>
+          have d1 : OpA k' α' (cl2 a b c :: F.atm c :: Q) (.atm b) :=
+            OpA.mono _ d' (fun E hE => mem_swap hE)
+          have d2 := swap_K k' (R := F.atm c :: Q) mem0 d1
+          have d3 := cut_rule_ctx (a := a) (b := b) (cs := []) (P := P) hb α' k'
+            (F.atm c :: Q) (.atm b) d2
+          have d4 : Op (k' + m * α' + m) (F.atm c :: (P ++ Q)) (.atm b) :=
+            Op.mono _ d3 (fun E hE => by
+              cases List.mem_append.mp hE with
+              | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+              | inr h =>
+                cases List.mem_cons.mp h with
+                | inl e => exact List.mem_cons.mpr (Or.inl e)
+                | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))
+          have d5 := cut_rule_ctx (a := b) (b := c) (cs := []) (P := P ++ Q) d4 β m P
+            (.atm a) hL
+          have d6 : Op (m + (k' + m * α' + m) * β + (k' + m * α' + m)) (P ++ Q) (.atm a) :=
+            Op.mono _ d5 (fun E hE => by
+              cases List.mem_append.mp hE with
+              | inl h => exact h
+              | inr h => exact List.mem_append.mpr (Or.inl h))
+          exact Op.lift d6 (bound_K m β k' α')
+    | and d₁ d₂ => exact up (Op.and (ih d₁) (ih d₂))
+    | orL d => exact up (Op.orL (ih d))
+    | orR d => exact up (Op.orR (ih d))
+    | @aug _ α' _ D G' d =>
+      have d1 : Op (m + (k + m * α') * (β + 1)) (P ++ D :: Q) G' :=
+        ih (OpA.mono k d (fun E hE => mem_swap hE))
+      have d2 : Op _ (D :: (P ++ Q)) G' := Op.mono _ d1 (fun E hE => by
+        cases List.mem_append.mp hE with
+        | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+        | inr h =>
+          cases List.mem_cons.mp h with
+          | inl e => exact List.mem_cons.mpr (Or.inl e)
+          | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))
+      have e2 : m * (α' + 1) = m * α' + m := by rw [Nat.left_distrib, Nat.mul_one]
+      exact Op.lift (Op.aug d2) (Nat.le_trans (Nb_succ m β _) (Nb_mono m β (by omega)))
+    | @gen _ _ _ X G' A hA d =>
+      cases (show ∃ B, Fresh B (P ++ Q) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+      | intro B hB =>
+        have d' := OpA.ren d (upd id A B)
+        rw [map_ren_away (cl2 a b c :: Q) hA.1, sub_ren_away (G := G') hA.2] at d'
+        exact up (Op.gen hB (ih d'))
+
+/-! ## Orden 2 sobre A_{m,t}: K₂ = (d₀ ⊃ a) ⊃ c_t
+  κ(K₂) ≤ 5t + 2, κ_{A,K₂}(c_t) ≤ m + 4 con un Augment, κ_A(c_t) > (m+5)t. -/
+
+abbrev ruleK2 (m t : Nat) : F := .imp (ruleK m) (.atm (3 * t))
+
+theorem amp_chainA (m t : Nat) {P : List F} (hP : ∀ D, D ∈ amp m t → D ∈ P) :
+    ∀ i, i ≤ m + 1 → OpA (i + 1) 0 (.atm 2 :: P) (.atm (3 * i + 2)) := by
+  intro i
+  induction i with
+  | zero => intro _; exact OpA.fact (Elab.mem mem0)
+  | succ i ih =>
+    intro hi
+    have hm : F.imp (.atm (3 * i + 2)) (.atm (3 * (i + 1) + 2)) ∈ .atm 2 :: P :=
+      List.mem_cons.mpr (Or.inr (hP _ (List.mem_cons.mpr (Or.inr
+        (List.mem_append.mpr (Or.inl (dch_mem (by omega))))))))
+    exact OpA.back (Elab.mem hm) (ih (by omega))
+
+theorem order2_family (m t : Nat) :
+    OpA (m + 4) 1 (ruleK2 m t :: amp m t) (.atm (3 * t)) ∧
+    Op (5 * t + 2) (amp m t) (ruleK2 m t) ∧
+    OpA (5 * t + 1) t (ruleK m :: amp m t) (.atm (3 * t)) ∧
+    ¬ Op (lb (m + 5) t) (amp m t) (.atm (3 * t)) := by
+  refine ⟨?_, ?_, amp_upperA m t t (Nat.le_refl _) _ (fun _ h => h), (amplification m t).2.2.2⟩
+  · have d := amp_chainA m t (P := ruleK2 m t :: amp m t)
+      (fun D hD => List.mem_cons.mpr (Or.inr hD)) (m + 1) (Nat.le_refl _)
+    exact OpA.lift (OpA.back (Elab.mem mem0) (OpA.aug d)) (by omega) (Nat.le_refl _)
+  · exact Op.lift (Op.aug (amp_upperK m t t (Nat.le_refl _) _ (fun _ h => h))) (by omega)
+
+-- orden 2: ninguna cota κ_B(G) ≤ κ_{B,K}(G) + f(κ_B(K)), ni con α = 1
+theorem order2_no_additive (f : Nat → Nat) : ∃ (B : List F) (K G : F) (n : Nat),
+    OpA n 1 (K :: B) G ∧ Op 12 B K ∧ ¬ Op (n + f 12) B G := by
+  refine ⟨amp (f 12) 2, ruleK2 (f 12) 2, .atm (3 * 2), f 12 + 4,
+    (order2_family (f 12) 2).1, (order2_family (f 12) 2).2.1, fun h => ?_⟩
+  have hl : lb (f 12 + 5) 2 = 2 * f 12 + 10 := by
+    show 0 + (f 12 + 5) + (f 12 + 5) = 2 * f 12 + 10
+    omega
+  exact (order2_family (f 12) 2).2.2.2 (Op.lift h (by rw [hl]; omega))
+
+/-! ## Lemas de orden k (H10)
+  K₀ = a₀, K_{k+1} = K_k ⊃ a_{k+1}. Con K_{k-1} en el programa, K_{k+1} actúa como
+  a_k ⊃ a_{k+1}; cada uso externo paga un corte de orden k. -/
+
+-- cadena encajada a la izquierda
+def chn (f : Nat → Nat) : Nat → F
+  | 0     => .atm (f 0)
+  | k + 1 => .imp (chn f k) (.atm (f (k + 1)))
+
+-- D ⊃ b puede cambiarse por el hecho b
+theorem strengthD {D : F} {b : Nat} : ∀ n {P : List F} {G : F},
+    Op n (.imp D (.atm b) :: P) G → Op n (.atm b :: P) G := by
+  intro n
+  induction n with
+  | zero => intro _ _ h; cases h
+  | succ k ih =>
+    intro P G h
+    have inR : ∀ E, E ∈ P → E ∈ F.atm b :: P := fun E h => List.mem_cons.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      cases Elab.split (L₁ := [.imp D (.atm b)]) (L₂ := P) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact Op.fact (Elab.mono inR e')
+    | @back _ _ G' A e d =>
+      cases Elab.split (L₁ := [.imp D (.atm b)]) (L₂ := P) e with
+      | inl e' =>
+        rw [F.atm.inj (F.imp.inj (Elab.clause_only e')).2]
+        exact Op.fact (Elab.mem mem0)
+      | inr e' => exact Op.back (Elab.mono inR e') (ih d)
+    | and d₁ d₂ => exact Op.and (ih d₁) (ih d₂)
+    | orL d => exact Op.orL (ih d)
+    | orR d => exact Op.orR (ih d)
+    | @aug _ _ D' G' d =>
+      have d1 : Op k (.atm b :: D' :: P) G' := ih (Op.mono k d (fun E hE => mem_swap hE))
+      exact Op.aug (Op.mono k d1 (fun E hE => mem_swap hE))
+    | @gen _ _ X G' A hA d =>
+      have hA' : Fresh A (.atm b :: P) (.all X G') := ⟨fun E hE hocc => by
+          cases List.mem_cons.mp hE with
+          | inl e =>
+            rw [e] at hocc
+            exact hA.1 _ mem0 (Or.inr hocc)
+          | inr h' => exact hA.1 E (List.mem_cons.mpr (Or.inr h')) hocc, hA.2⟩
+      exact Op.gen hA' (ih d)
+
+-- con D en R, (D ⊃ b) ⊃ a actúa como b ⊃ a
+theorem swapD {D : F} {a b : Nat} : ∀ n {α : Nat} {R : List F} {G : F}, D ∈ R →
+    OpA n α (.imp (.imp D (.atm b)) (.atm a) :: R) G →
+      OpA n α (.imp (.atm b) (.atm a) :: R) G := by
+  intro n
+  induction n with
+  | zero => intro _ _ _ _ h; cases h
+  | succ k ih =>
+    intro α R G hc h
+    have inR : ∀ E, E ∈ R → E ∈ F.imp (.atm b) (.atm a) :: R :=
+      fun E h => List.mem_cons.mpr (Or.inr h)
+    cases h with
+    | fact e =>
+      cases Elab.split (L₁ := [.imp (.imp D (.atm b)) (.atm a)]) (L₂ := R) e with
+      | inl e' => cases Elab.clause_only e'
+      | inr e' => exact OpA.fact (Elab.mono inR e')
+    | @back _ _ _ G' A e d =>
+      cases Elab.split (L₁ := [.imp (.imp D (.atm b)) (.atm a)]) (L₂ := R) e with
+      | inr e' => exact OpA.back (Elab.mono inR e') (ih hc d)
+      | inl e' =>
+        have hx := F.imp.inj (Elab.clause_only e')
+        rw [F.atm.inj hx.2]
+        rw [hx.1] at d
+        cases d with
+        | @aug _ β _ _ _ d' =>
+          have d1 : OpA _ β (.imp (.imp D (.atm b)) (.atm a) :: R) (.atm b) :=
+            OpA.mono _ d' (fun E hE => by
+              cases List.mem_cons.mp hE with
+              | inl e => rw [e]; exact List.mem_cons.mpr (Or.inr hc)
+              | inr h' => exact h')
+          have d2 := ih hc (OpA.lift d1 (Nat.le_succ _) (Nat.le_refl β))
+          exact OpA.lift (OpA.back (Elab.mem mem0) d2) (Nat.le_refl _) (Nat.le_succ β)
+    | and d₁ d₂ => exact OpA.and (ih hc d₁) (ih hc d₂)
+    | orL d => exact OpA.orL (ih hc d)
+    | orR d => exact OpA.orR (ih hc d)
+    | @aug _ _ _ D' G' d =>
+      have d1 : OpA k _ (.imp (.atm b) (.atm a) :: D' :: R) G' :=
+        ih (List.mem_cons.mpr (Or.inr hc)) (OpA.mono k d (fun E hE => mem_swap hE))
+      exact OpA.aug (OpA.mono k d1 (fun E hE => mem_swap hE))
+    | @gen _ _ _ X G' A hA d =>
+      have hA' : Fresh A (.imp (.atm b) (.atm a) :: R) (.all X G') := ⟨fun E hE hocc => by
+          cases List.mem_cons.mp hE with
+          | inl e =>
+            rw [e] at hocc
+            exact hA.1 _ mem0 ((hocc : F.occ A (.atm b) ∨ F.occ A (.atm a)).elim
+              (fun h' => Or.inl (Or.inr h')) Or.inr)
+          | inr h' => exact hA.1 E (List.mem_cons.mpr (Or.inr h')) hocc, hA.2⟩
+      exact OpA.gen hA' (ih hc d)
+
+-- presupuesto de Augment ≤ altura
+theorem OpA.of_op {n : Nat} {P : List F} {G : F} (h : Op n P G) : OpA n n P G := by
+  induction h with
+  | fact e => exact OpA.fact e
+  | back e _ ih => exact OpA.lift (OpA.back e ih) (Nat.le_refl _) (Nat.le_succ _)
+  | and _ _ ih₁ ih₂ => exact OpA.lift (OpA.and ih₁ ih₂) (Nat.le_refl _) (Nat.le_succ _)
+  | orL _ ih => exact OpA.lift (OpA.orL ih) (Nat.le_refl _) (Nat.le_succ _)
+  | orR _ ih => exact OpA.lift (OpA.orR ih) (Nat.le_refl _) (Nat.le_succ _)
+  | aug _ ih => exact OpA.aug ih
+  | gen hA _ ih => exact OpA.lift (OpA.gen hA ih) (Nat.le_refl _) (Nat.le_succ _)
+
+-- cota del corte de orden k + 1
+def Tk : Nat → Nat → Nat → Nat → Nat → Nat
+  | 0, m, _, n, α     => n + m * α + m
+  | k + 1, m, β, n, α => n + Tk k (n + m * α + m) (n + m * α + m) m β
+
+theorem Tk_mono (k : Nat) : ∀ {m β n α m' β' n' α' : Nat}, m ≤ m' → β ≤ β' → n ≤ n' →
+    α ≤ α' → Tk k m β n α ≤ Tk k m' β' n' α' := by
+  induction k with
+  | zero =>
+    intro m _ n α m' _ n' α' hm _ hn hα
+    show n + m * α + m ≤ n' + m' * α' + m'
+    have := Nat.mul_le_mul hm hα
+    omega
+  | succ k ih =>
+    intro m β n α m' β' n' α' hm hβ hn hα
+    show n + Tk k (n + m * α + m) (n + m * α + m) m β ≤
+      n' + Tk k (n' + m' * α' + m') (n' + m' * α' + m') m' β'
+    have h1 := Nat.mul_le_mul hm hα
+    have h2 := ih (m := n + m * α + m) (m' := n' + m' * α' + m') (β := n + m * α + m)
+      (β' := n' + m' * α' + m') (n := m) (n' := m') (α := β) (α' := β')
+      (by omega) (by omega) hm hβ
+    omega
+
+-- P, K_k ⊢ᵐ_β a_{k+1}  y  K_{k+1}, Q ⊢ⁿ_α G  ⟹  P, Q ⊢^{T_k(m,β,n,α)} G
+theorem cut_orderk (f : Nat → Nat) : ∀ k {m β : Nat} {P : List F},
+    OpA m β (chn f k :: P) (.atm (f (k + 1))) →
+    ∀ n {α : Nat} {Q : List F} {G : F}, OpA n α (chn f (k + 1) :: Q) G →
+      Op (Tk k m β n α) (P ++ Q) G := by
+  intro k
+  induction k with
+  | zero =>
+    intro m _ P hL n α Q G h
+    exact cut_rule_ctx (a := f 1) (b := f 0) (cs := []) (P := P) (OpA.toOp hL) α n Q G h
+  | succ k ihk =>
+    intro m β P hL
+    have hb : Op m (.atm (f (k + 1)) :: P) (.atm (f (k + 1 + 1))) := strengthD m (OpA.toOp hL)
+    intro n
+    induction n with
+    | zero => intro _ _ _ h; cases h
+    | succ j ih =>
+      intro α Q G h
+      have inR : ∀ D, D ∈ Q → D ∈ P ++ Q := fun D h => List.mem_append.mpr (Or.inr h)
+      have up : ∀ {α' : Nat} {G' : F}, α' ≤ α → Op (Tk (k + 1) m β j α' + 1) (P ++ Q) G' →
+          Op (Tk (k + 1) m β (j + 1) α) (P ++ Q) G' := by
+        intro α' G' hα d
+        refine Op.lift d ?_
+        have h1 := Nat.mul_le_mul (Nat.le_refl m) hα
+        have h2 := Tk_mono k (m := j + m * α' + m) (m' := j + 1 + m * α + m)
+          (β := j + m * α' + m) (β' := j + 1 + m * α + m) (n := m) (n' := m) (α := β) (α' := β)
+          (by omega) (by omega) (Nat.le_refl _) (Nat.le_refl _)
+        show j + Tk k (j + m * α' + m) (j + m * α' + m) m β + 1 ≤
+          j + 1 + Tk k (j + 1 + m * α + m) (j + 1 + m * α + m) m β
+        omega
+      cases h with
+      | fact e =>
+        cases Elab.split (L₁ := [chn f (k + 1 + 1)]) (L₂ := Q) e with
+        | inl e' => cases Elab.clause_only e'
+        | inr e' => exact up (Nat.le_refl _) (Op.fact (Elab.mono inR e'))
+      | @back _ _ _ G' A e d =>
+        cases Elab.split (L₁ := [chn f (k + 1 + 1)]) (L₂ := Q) e with
+        | inr e' => exact up (Nat.le_refl _) (Op.back (Elab.mono inR e') (ih d))
+        | inl e' =>
+          have hx := F.imp.inj (Elab.clause_only e')
+          rw [F.atm.inj hx.2]
+          have d0 : OpA j α (chn f (k + 1 + 1) :: Q) (.imp (chn f k) (.atm (f (k + 1)))) := by
+            rw [hx.1] at d; exact d
+          cases d0 with
+          | @aug k' α' _ _ _ d' =>
+            have d1 : OpA k' α' (chn f (k + 1 + 1) :: chn f k :: Q) (.atm (f (k + 1))) :=
+              OpA.mono _ d' (fun E hE => mem_swap hE)
+            have d2 := swapD (D := chn f k) (a := f (k + 1 + 1)) (b := f (k + 1)) k'
+              (R := chn f k :: Q) mem0 d1
+            have d3 := cut_rule_ctx (a := f (k + 1 + 1)) (b := f (k + 1)) (cs := []) (P := P)
+              hb α' k' (chn f k :: Q) (.atm (f (k + 1))) d2
+            have d4 : Op (k' + m * α' + m) (chn f k :: (P ++ Q)) (.atm (f (k + 1))) :=
+              Op.mono _ d3 (fun E hE => by
+                cases List.mem_append.mp hE with
+                | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+                | inr h =>
+                  cases List.mem_cons.mp h with
+                  | inl e => exact List.mem_cons.mpr (Or.inl e)
+                  | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))
+            have d5 := ihk (OpA.of_op d4) m (Q := P) (G := .atm (f (k + 1 + 1))) hL
+            have d6 : Op (Tk k (k' + m * α' + m) (k' + m * α' + m) m β) (P ++ Q)
+                (.atm (f (k + 1 + 1))) :=
+              Op.mono _ d5 (fun E hE => by
+                cases List.mem_append.mp hE with
+                | inl h => exact h
+                | inr h => exact List.mem_append.mpr (Or.inl h))
+            have e3 : m * (α' + 1) = m * α' + m := by rw [Nat.left_distrib, Nat.mul_one]
+            have hL' : k' + m * α' + m ≤ k' + 1 + 1 + m * (α' + 1) + m := by omega
+            have hT := Tk_mono k (m := k' + m * α' + m) (m' := k' + 1 + 1 + m * (α' + 1) + m)
+              (β := k' + m * α' + m) (β' := k' + 1 + 1 + m * (α' + 1) + m) (n := m) (n' := m)
+              (α := β) (α' := β) hL' hL' (Nat.le_refl _) (Nat.le_refl _)
+            refine Op.lift d6 ?_
+            show Tk k (k' + m * α' + m) (k' + m * α' + m) m β ≤
+              k' + 1 + 1 + Tk k (k' + 1 + 1 + m * (α' + 1) + m)
+                (k' + 1 + 1 + m * (α' + 1) + m) m β
+            omega
+      | and d₁ d₂ => exact up (Nat.le_refl _) (Op.and (ih d₁) (ih d₂))
+      | orL d => exact up (Nat.le_refl _) (Op.orL (ih d))
+      | orR d => exact up (Nat.le_refl _) (Op.orR (ih d))
+      | @aug _ α' _ D G' d =>
+        have d1 : Op (Tk (k + 1) m β j α') (P ++ D :: Q) G' :=
+          ih (OpA.mono j d (fun E hE => mem_swap hE))
+        have d2 : Op _ (D :: (P ++ Q)) G' := Op.mono _ d1 (fun E hE => by
+          cases List.mem_append.mp hE with
+          | inl h => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inl h)))
+          | inr h =>
+            cases List.mem_cons.mp h with
+            | inl e => exact List.mem_cons.mpr (Or.inl e)
+            | inr h' => exact List.mem_cons.mpr (Or.inr (List.mem_append.mpr (Or.inr h'))))
+        exact up (Nat.le_succ α') (Op.aug d2)
+      | @gen _ _ _ X G' A hA d =>
+        cases (show ∃ B, Fresh B (P ++ Q) (.all X G') from ⟨_, fresh_exists _ _⟩) with
+        | intro B hB =>
+          have d' := OpA.ren d (upd id A B)
+          rw [map_ren_away (chn f (k + 1 + 1) :: Q) hA.1, sub_ren_away (G := G') hA.2] at d'
+          exact up (Nat.le_refl _) (Op.gen hB (ih d'))
+
+/-! ## H19: búsqueda acotada decidible -/
+
+-- átomos de f
+def F.atoms : F → List Nat
+  | .atm a   => [a]
+  | .var _   => []
+  | .imp f g => f.atoms ++ g.atoms
+  | .and f g => f.atoms ++ g.atoms
+  | .or f g  => f.atoms ++ g.atoms
+  | .all _ f => f.atoms
+
+theorem F.occ_atoms {a : Nat} (f : F) (h : f.occ a) : a ∈ f.atoms := by
+  induction f with
+  | atm b => have e : a = b := h; subst e; exact mem0
+  | var _ => exact False.elim h
+  | imp f g ihf ihg =>
+    cases h with
+    | inl h' => exact List.mem_append.mpr (Or.inl (ihf h'))
+    | inr h' => exact List.mem_append.mpr (Or.inr (ihg h'))
+  | and f g ihf ihg =>
+    cases h with
+    | inl h' => exact List.mem_append.mpr (Or.inl (ihf h'))
+    | inr h' => exact List.mem_append.mpr (Or.inr (ihg h'))
+  | or f g ihf ihg =>
+    cases h with
+    | inl h' => exact List.mem_append.mpr (Or.inl (ihf h'))
+    | inr h' => exact List.mem_append.mpr (Or.inr (ihg h'))
+  | all _ f ih => exact ih h
+
+-- átomos de P
+def atomsL : List F → List Nat
+  | []     => []
+  | D :: P => D.atoms ++ atomsL P
+
+theorem mem_atomsL {a : Nat} {D : F} (P : List F) (hD : D ∈ P) (h : D.occ a) :
+    a ∈ atomsL P := by
+  induction P with
+  | nil => cases hD
+  | cons E P ih =>
+    cases List.mem_cons.mp hD with
+    | inl e => rw [e] at h; exact List.mem_append.mpr (Or.inl (F.occ_atoms E h))
+    | inr h' => exact List.mem_append.mpr (Or.inr (ih h'))
+
+-- σ fija los átomos de P ⟹ Pσ = P
+theorem map_ren_fix {σ : Nat → Nat} (P : List F) (h : ∀ D, D ∈ P → ∀ a, D.occ a → σ a = a) :
+    P.map (F.ren σ) = P := by
+  induction P with
+  | nil => rfl
+  | cons D P ih =>
+    simp only [List.map]
+    rw [F.ren_congr D (τ := id) (fun a ha => h D mem0 a ha), F.ren_id,
+      ih (fun E hE => h E (List.mem_cons.mpr (Or.inr hE)))]
+
+-- fuera de S ↦ d
+def into (S : List Nat) (d x : Nat) : Nat := if x ∈ S then x else d
+
+theorem into_mem {S : List Nat} {d x : Nat} (h : x ∈ S) : into S d x = x := by
+  unfold into
+  split
+  · rfl
+  · contradiction
+
+theorem into_in {S : List Nat} {d : Nat} (hd : d ∈ S) (x : Nat) : into S d x ∈ S := by
+  unfold into
+  split
+  · assumption
+  · exact hd
+
+-- [P] con instancias en S
+inductive ElabS (S : List Nat) (P : List F) : F → Prop where
+  | mem   {D : F} : D ∈ P → ElabS S P D
+  | andL  {D₁ D₂ : F} : ElabS S P (.and D₁ D₂) → ElabS S P D₁
+  | andR  {D₁ D₂ : F} : ElabS S P (.and D₁ D₂) → ElabS S P D₂
+  | headL {G D₁ D₂ : F} : ElabS S P (.imp G (.and D₁ D₂)) → ElabS S P (.imp G D₁)
+  | headR {G D₁ D₂ : F} : ElabS S P (.imp G (.and D₁ D₂)) → ElabS S P (.imp G D₂)
+  | curry {G G' D : F} : ElabS S P (.imp G (.imp G' D)) → ElabS S P (.imp (.and G G') D)
+  | inst  {X : Nat} {D : F} {A : Nat} : A ∈ S → ElabS S P (.all X D) → ElabS S P (D.sub X A)
+  | hinst {X : Nat} {G D : F} {A : Nat} : A ∈ S →
+      ElabS S P (.imp G (.all X D)) → ElabS S P (.imp G (D.sub X A))
+
+-- renombrar hacia S
+theorem Elab.renS {S : List Nat} {σ : Nat → Nat} (hσ : ∀ x, σ x ∈ S) {P : List F} {D : F}
+    (h : Elab P D) : ElabS S (P.map (F.ren σ)) (D.ren σ) := by
+  induction h with
+  | mem h => exact ElabS.mem (List.mem_map.mpr ⟨_, h, rfl⟩)
+  | andL _ ih => exact ElabS.andL ih
+  | andR _ ih => exact ElabS.andR ih
+  | headL _ ih => exact ElabS.headL ih
+  | headR _ ih => exact ElabS.headR ih
+  | curry _ ih => exact ElabS.curry ih
+  | @inst X D A _ ih =>
+    rw [F.ren_sub]
+    exact ElabS.inst (hσ A) ih
+  | @hinst X G D A _ ih =>
+    show ElabS S _ (F.imp (G.ren σ) ((D.sub X A).ren σ))
+    rw [F.ren_sub]
+    exact ElabS.hinst (hσ A) ih
+
+-- ∃ booleano en listas
+def anyL {α : Type} (p : α → Bool) : List α → Bool
+  | []     => false
+  | x :: l => p x || anyL p l
+
+theorem anyL_iff {α : Type} (p : α → Bool) :
+    ∀ l : List α, anyL p l = true ↔ ∃ x, x ∈ l ∧ p x = true
+  | [] => ⟨fun h => by simp [anyL] at h, fun ⟨_, h, _⟩ => by cases h⟩
+  | x :: l => by
+    show (p x || anyL p l) = true ↔ _
+    rw [Bool.or_eq_true, anyL_iff p l]
+    constructor
+    · intro h
+      cases h with
+      | inl h => exact ⟨x, mem0, h⟩
+      | inr h =>
+        obtain ⟨y, hy, h⟩ := h
+        exact ⟨y, List.mem_cons.mpr (Or.inr hy), h⟩
+    · intro ⟨y, hy, h⟩
+      cases List.mem_cons.mp hy with
+      | inl e => rw [e] at h; exact Or.inl h
+      | inr hy => exact Or.inr ⟨y, hy, h⟩
+
+-- cuerpo acumulado
+def comb : Option F → F → F
+  | none, G'   => G'
+  | some G, G' => .and G G'
+
+def wrap : Option F → F → F
+  | none, D   => D
+  | some G, D => .imp G D
+
+def okb (t : F → Bool) : Option F → Bool
+  | none   => true
+  | some G => t G
+
+-- D (cuerpo o) da el hecho A o una regla G ⊃ A con t G
+def bc (S : List Nat) (A : Nat) (t : F → Bool) : Nat → Option F → F → Bool
+  | 0, _, _              => false
+  | _ + 1, o, .atm a     => decide (a = A) && okb t o
+  | k + 1, o, .imp G' D  => bc S A t k (some (comb o G')) D
+  | k + 1, o, .and D₁ D₂ => bc S A t k o D₁ || bc S A t k o D₂
+  | k + 1, o, .all X D   => anyL (fun a => bc S A t k o (D.sub X a)) S
+  | _ + 1, _, .var _     => false
+  | _ + 1, _, .or _ _    => false
+
+theorem bc_atm {S : List Nat} {A : Nat} {t : F → Bool} (k : Nat) (o : Option F) (a : Nat) :
+    bc S A t (k + 1) o (.atm a) = (decide (a = A) && okb t o) := rfl
+
+theorem bc_imp {S : List Nat} {A : Nat} {t : F → Bool} (k : Nat) (o : Option F) (G' D : F) :
+    bc S A t (k + 1) o (.imp G' D) = bc S A t k (some (comb o G')) D := rfl
+
+theorem bc_and {S : List Nat} {A : Nat} {t : F → Bool} (k : Nat) (o : Option F) (D₁ D₂ : F) :
+    bc S A t (k + 1) o (.and D₁ D₂) = (bc S A t k o D₁ || bc S A t k o D₂) := rfl
+
+theorem bc_all {S : List Nat} {A : Nat} {t : F → Bool} (k : Nat) (o : Option F) (X : Nat)
+    (D : F) : bc S A t (k + 1) o (.all X D) = anyL (fun a => bc S A t k o (D.sub X a)) S := rfl
+
+theorem bc_mono {S : List Nat} {A : Nat} {t : F → Bool} :
+    ∀ k k' (o : Option F) (D : F), k ≤ k' → bc S A t k o D = true → bc S A t k' o D = true := by
+  intro k
+  induction k with
+  | zero => intro _ _ _ _ h; simp [bc] at h
+  | succ k ih =>
+    intro k' o D hk h
+    cases k' with
+    | zero => exact absurd hk (by omega)
+    | succ k' =>
+      cases D with
+      | atm a => rw [bc_atm] at h ⊢; exact h
+      | var _ => simp [bc] at h
+      | or _ _ => simp [bc] at h
+      | imp G' D =>
+        rw [bc_imp] at h ⊢
+        exact ih k' _ D (by omega) h
+      | and D₁ D₂ =>
+        rw [bc_and, Bool.or_eq_true] at h ⊢
+        cases h with
+        | inl h => exact Or.inl (ih k' o D₁ (by omega) h)
+        | inr h => exact Or.inr (ih k' o D₂ (by omega) h)
+      | all X D =>
+        rw [bc_all, anyL_iff] at h ⊢
+        obtain ⟨a, ha, h⟩ := h
+        exact ⟨a, ha, ih k' o _ (by omega) h⟩
+
+-- bc ⟹ hecho A o regla G ⊃ A en [P], con t G
+theorem bc_sound {S : List Nat} {A : Nat} {t : F → Bool} {P : List F} :
+    ∀ k (o : Option F) (D : F), Elab P (wrap o D) → bc S A t k o D = true →
+      Elab P (.atm A) ∨ ∃ G, Elab P (.imp G (.atm A)) ∧ t G = true := by
+  intro k
+  induction k with
+  | zero => intro _ _ _ h; simp [bc] at h
+  | succ k ih =>
+    intro o D e h
+    cases D with
+    | atm a =>
+      rw [bc_atm, Bool.and_eq_true] at h
+      have ha : a = A := of_decide_eq_true h.1
+      rw [ha] at e
+      cases o with
+      | none => exact Or.inl e
+      | some G => exact Or.inr ⟨G, e, h.2⟩
+    | var _ => simp [bc] at h
+    | or _ _ => simp [bc] at h
+    | imp G' D =>
+      rw [bc_imp] at h
+      refine ih _ D ?_ h
+      cases o with
+      | none => exact e
+      | some G => exact Elab.curry e
+    | and D₁ D₂ =>
+      rw [bc_and, Bool.or_eq_true] at h
+      cases o with
+      | none =>
+        cases h with
+        | inl h => exact ih none D₁ (Elab.andL e) h
+        | inr h => exact ih none D₂ (Elab.andR e) h
+      | some G =>
+        cases h with
+        | inl h => exact ih (some G) D₁ (Elab.headL e) h
+        | inr h => exact ih (some G) D₂ (Elab.headR e) h
+    | all X D =>
+      rw [bc_all, anyL_iff] at h
+      obtain ⟨a, _, h⟩ := h
+      cases o with
+      | none => exact ih none _ (Elab.inst a e) h
+      | some G => exact ih (some G) _ (Elab.hinst a e) h
+
+-- [P]_S ∋ E con bc ⟹ algún D ∈ P con bc (combustible |D|)
+theorem bc_complete {S : List Nat} {A : Nat} {t : F → Bool} {P : List F} {E : F}
+    (h : ElabS S P E) :
+    bc S A t E.w none E = true → ∃ D, D ∈ P ∧ bc S A t D.w none D = true := by
+  induction h with
+  | mem hD => exact fun hE => ⟨_, hD, hE⟩
+  | @andL D₁ D₂ _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.and D₁ D₂).w = (D₁.w + D₂.w) + 1 from rfl, bc_and, Bool.or_eq_true]
+    exact Or.inl (bc_mono _ _ _ _ (by omega) hE)
+  | @andR D₁ D₂ _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.and D₁ D₂).w = (D₁.w + D₂.w) + 1 from rfl, bc_and, Bool.or_eq_true]
+    exact Or.inr (bc_mono _ _ _ _ (by omega) hE)
+  | @headL G D₁ D₂ _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.imp G D₁).w = (G.w + 2 * D₁.w) + 1 from rfl, bc_imp] at hE
+    have e : (F.imp G (F.and D₁ D₂)).w = (G.w + 2 * D₁.w + 2 * D₂.w + 1) + 1 + 1 := by
+      simp only [F.w]; omega
+    rw [e, bc_imp, bc_and, Bool.or_eq_true]
+    exact Or.inl (bc_mono _ _ _ _ (by omega) hE)
+  | @headR G D₁ D₂ _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.imp G D₂).w = (G.w + 2 * D₂.w) + 1 from rfl, bc_imp] at hE
+    have e : (F.imp G (F.and D₁ D₂)).w = (G.w + 2 * D₁.w + 2 * D₂.w + 1) + 1 + 1 := by
+      simp only [F.w]; omega
+    rw [e, bc_imp, bc_and, Bool.or_eq_true]
+    exact Or.inr (bc_mono _ _ _ _ (by omega) hE)
+  | @curry G G' D _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.imp (F.and G G') D).w = (G.w + G'.w + 1 + 2 * D.w) + 1 from rfl, bc_imp] at hE
+    have e : (F.imp G (F.imp G' D)).w = (G.w + 2 * G'.w + 4 * D.w + 1) + 1 + 1 := by
+      simp only [F.w]; omega
+    rw [e, bc_imp, bc_imp]
+    simp only [comb] at hE ⊢
+    exact bc_mono _ _ _ _ (by omega) hE
+  | @inst X D a ha _ ih =>
+    intro hE
+    apply ih
+    rw [F.w_sub] at hE
+    rw [show (F.all X D).w = D.w + 1 from rfl, bc_all, anyL_iff]
+    exact ⟨a, ha, hE⟩
+  | @hinst X G D a ha _ ih =>
+    intro hE
+    apply ih
+    rw [show (F.imp G (D.sub X a)).w = (G.w + 2 * (D.sub X a).w) + 1 from rfl, bc_imp,
+      F.w_sub] at hE
+    have e : (F.imp G (F.all X D)).w = (G.w + 2 * D.w + 1) + 1 + 1 := by
+      simp only [F.w]; omega
+    rw [e, bc_imp, bc_all, anyL_iff]
+    exact ⟨a, ha, bc_mono _ _ _ _ (by omega) hE⟩
+
+theorem bc_fact {S : List Nat} {A : Nat} {t : F → Bool} :
+    bc S A t (F.atm A).w none (.atm A) = true := by
+  show bc S A t (0 + 1) none (.atm A) = true
+  rw [bc_atm]
+  simp [okb]
+
+theorem bc_rule {S : List Nat} {A : Nat} {t : F → Bool} {G : F} (h : t G = true) :
+    bc S A t (F.imp G (.atm A)).w none (.imp G (.atm A)) = true := by
+  have e : (F.imp G (.atm A)).w = (G.w + 1) + 1 + 1 := by simp only [F.w] <;> omega
+  rw [e, bc_imp, bc_atm]
+  simp [okb, comb, h]
+
+-- decisión de Op n P G: instancias en los átomos de P y de la meta
+def opB : Nat → List F → F → Bool
+  | 0, _, _              => false
+  | n + 1, P, .atm A     => anyL (fun D => bc (A :: atomsL P) A (fun G => opB n P G) D.w none D) P
+  | _ + 1, _, .var _     => false
+  | n + 1, P, .imp D G   => opB n (D :: P) G
+  | n + 1, P, .and G₁ G₂ => opB n P G₁ && opB n P G₂
+  | n + 1, P, .or G₁ G₂  => opB n P G₁ || opB n P G₂
+  | n + 1, P, .all X G   => opB n P (G.sub X (bndL P + (F.all X G).bnd))
+
+theorem opB_atm (n : Nat) (P : List F) (A : Nat) :
+    opB (n + 1) P (.atm A) =
+      anyL (fun D => bc (A :: atomsL P) A (fun G => opB n P G) D.w none D) P := rfl
+
+theorem opB_var (n : Nat) (P : List F) (X : Nat) : opB (n + 1) P (.var X) = false := rfl
+
+theorem opB_imp (n : Nat) (P : List F) (D G : F) :
+    opB (n + 1) P (.imp D G) = opB n (D :: P) G := rfl
+
+theorem opB_and (n : Nat) (P : List F) (G₁ G₂ : F) :
+    opB (n + 1) P (.and G₁ G₂) = (opB n P G₁ && opB n P G₂) := rfl
+
+theorem opB_or (n : Nat) (P : List F) (G₁ G₂ : F) :
+    opB (n + 1) P (.or G₁ G₂) = (opB n P G₁ || opB n P G₂) := rfl
+
+theorem opB_all (n : Nat) (P : List F) (X : Nat) (G : F) :
+    opB (n + 1) P (.all X G) = opB n P (G.sub X (bndL P + (F.all X G).bnd)) := rfl
+
+-- H19(a): ⊢^n decidible
+theorem opB_iff : ∀ n (P : List F) (G : F), opB n P G = true ↔ Op n P G := by
+  intro n
+  induction n with
+  | zero =>
+    intro _ _
+    constructor
+    · intro h; simp [opB] at h
+    · intro h; cases h
+  | succ n ih =>
+    intro P G
+    cases G with
+    | atm A =>
+      constructor
+      · intro h
+        rw [opB_atm, anyL_iff] at h
+        obtain ⟨D, hD, h⟩ := h
+        have h' : bc (A :: atomsL P) A (fun G => opB n P G) D.w none D = true := h
+        cases bc_sound D.w none D (Elab.mem hD) h' with
+        | inl e => exact Op.fact e
+        | inr k =>
+          obtain ⟨G, e, hG⟩ := k
+          exact Op.back e ((ih P G).mp hG)
+      · intro h
+        rw [opB_atm, anyL_iff]
+        have hσ : ∀ x, into (A :: atomsL P) A x ∈ A :: atomsL P := into_in mem0
+        have hfix : P.map (F.ren (into (A :: atomsL P) A)) = P :=
+          map_ren_fix P (fun D hD a ha =>
+            into_mem (List.mem_cons.mpr (Or.inr (mem_atomsL P hD ha))))
+        have hA : into (A :: atomsL P) A A = A := into_mem mem0
+        cases h with
+        | fact e =>
+          have e' := Elab.renS hσ e
+          rw [hfix] at e'
+          have q : (F.atm A).ren (into (A :: atomsL P) A) = .atm A := by
+            show F.atm (into (A :: atomsL P) A A) = .atm A
+            rw [hA]
+          rw [q] at e'
+          exact bc_complete (t := fun G => opB n P G) e' bc_fact
+        | @back _ _ G _ e h' =>
+          have e' := Elab.renS hσ e
+          rw [hfix] at e'
+          have q : (F.imp G (.atm A)).ren (into (A :: atomsL P) A) =
+              .imp (G.ren (into (A :: atomsL P) A)) (.atm A) := by
+            show F.imp (G.ren (into (A :: atomsL P) A)) (.atm (into (A :: atomsL P) A A)) = _
+            rw [hA]
+          rw [q] at e'
+          have h'' := Op.ren h' (into (A :: atomsL P) A)
+          rw [hfix] at h''
+          exact bc_complete (t := fun G => opB n P G) e'
+            (bc_rule (t := fun G => opB n P G) ((ih P _).mpr h''))
+    | var X =>
+      rw [opB_var]
+      constructor
+      · intro h; cases h
+      · intro h; cases h
+    | imp D G =>
+      rw [opB_imp, ih (D :: P) G]
+      constructor
+      · exact Op.aug
+      · intro h; cases h with | aug h => exact h
+    | and G₁ G₂ =>
+      rw [opB_and, Bool.and_eq_true, ih P G₁, ih P G₂]
+      constructor
+      · intro h; exact Op.and h.1 h.2
+      · intro h; cases h with | and h₁ h₂ => exact ⟨h₁, h₂⟩
+    | or G₁ G₂ =>
+      rw [opB_or, Bool.or_eq_true, ih P G₁, ih P G₂]
+      constructor
+      · intro h
+        cases h with
+        | inl h => exact Op.orL h
+        | inr h => exact Op.orR h
+      · intro h
+        cases h with
+        | orL h => exact Or.inl h
+        | orR h => exact Or.inr h
+    | all X G =>
+      rw [opB_all]
+      constructor
+      · intro h
+        exact Op.gen (fresh_exists P (.all X G)) ((ih P _).mp h)
+      · intro h
+        cases h with
+        | @gen _ _ _ _ A' hA h' =>
+          have h'' := Op.ren h' (upd id A' (bndL P + (F.all X G).bnd))
+          rw [map_ren_away P hA.1, sub_ren_away (G := G) hA.2] at h''
+          exact (ih P _).mpr h''
+
+instance instDecOp (n : Nat) (P : List F) (G : F) : Decidable (Op n P G) :=
+  decidable_of_iff _ (opB_iff n P G)
+
+-- una cota de coste da un procedimiento de decisión
+theorem bound_decides (f : List F → F → Nat) (hf : ∀ P G, Der P G → Op (f P G) P G)
+    (P : List F) (G : F) : Der P G ↔ opB (f P G) P G = true :=
+  ⟨fun h => (opB_iff _ P G).mpr (hf P G h), fun h => ⟨_, (opB_iff _ P G).mp h⟩⟩
+
+example : opB 2 [] (.imp (.atm 0) (.atm 0)) = true := rfl
+
+/-! ## H19: segundo orden, ∀X sustitucional (Gheorghiu–Pym, aridad 0) -/
+
+inductive Fm2 where
+  | atom : Nat → Fm2
+  | pvar : Nat → Fm2
+  | bot  : Fm2
+  | and  : Fm2 → Fm2 → Fm2
+  | or   : Fm2 → Fm2 → Fm2
+  | imp  : Fm2 → Fm2 → Fm2
+  | all  : Nat → Fm2 → Fm2
+
+-- φ[a/X]
+def Fm2.sub (X a : Nat) : Fm2 → Fm2
+  | .atom b  => .atom b
+  | .pvar Y  => if Y = X then .atom a else .pvar Y
+  | .bot     => .bot
+  | .and φ ψ => .and (φ.sub X a) (ψ.sub X a)
+  | .or φ ψ  => .or (φ.sub X a) (ψ.sub X a)
+  | .imp φ ψ => .imp (φ.sub X a) (ψ.sub X a)
+  | .all Y φ => if Y = X then .all Y φ else .all Y (φ.sub X a)
+
+-- X libre en φ
+def Fm2.fr (X : Nat) : Fm2 → Prop
+  | .atom _  => False
+  | .pvar Y  => Y = X
+  | .bot     => False
+  | .and φ ψ => φ.fr X ∨ ψ.fr X
+  | .or φ ψ  => φ.fr X ∨ ψ.fr X
+  | .imp φ ψ => φ.fr X ∨ ψ.fr X
+  | .all Y φ => Y ≠ X ∧ φ.fr X
+
+abbrev Fm2.closed (φ : Fm2) : Prop := ∀ X, ¬ φ.fr X
+
+def Fm2.sz : Fm2 → Nat
+  | .atom _  => 1
+  | .pvar _  => 1
+  | .bot     => 1
+  | .and φ ψ => φ.sz + ψ.sz + 1
+  | .or φ ψ  => φ.sz + ψ.sz + 1
+  | .imp φ ψ => φ.sz + ψ.sz + 1
+  | .all _ φ => φ.sz + 1
+
+theorem Fm2.sz_pos (φ : Fm2) : 0 < φ.sz := by
+  cases φ <;> simp only [Fm2.sz] <;> omega
+
+theorem Fm2.sz_sub (X a : Nat) (φ : Fm2) : (φ.sub X a).sz = φ.sz := by
+  induction φ with
+  | atom b => rfl
+  | pvar Y =>
+    by_cases e : Y = X
+    · rw [Fm2.sub, ite_eq_left e]; rfl
+    · rw [Fm2.sub, ite_eq_right e]
+  | bot => rfl
+  | and φ ψ ihφ ihψ => simp only [Fm2.sub, Fm2.sz, ihφ, ihψ]
+  | or φ ψ ihφ ihψ => simp only [Fm2.sub, Fm2.sz, ihφ, ihψ]
+  | imp φ ψ ihφ ihψ => simp only [Fm2.sub, Fm2.sz, ihφ, ihψ]
+  | all Y φ ih =>
+    by_cases e : Y = X
+    · rw [Fm2.sub, ite_eq_left e]
+    · rw [Fm2.sub, ite_eq_right e]; simp only [Fm2.sz, ih]
+
+theorem Fm2.fr_sub {X a Z : Nat} (φ : Fm2) (h : (φ.sub X a).fr Z) : φ.fr Z ∧ Z ≠ X := by
+  induction φ with
+  | atom b => exact False.elim h
+  | pvar Y =>
+    by_cases e : Y = X
+    · rw [Fm2.sub, ite_eq_left e] at h; exact False.elim h
+    · rw [Fm2.sub, ite_eq_right e] at h
+      have hY : Y = Z := h
+      subst hY
+      exact ⟨rfl, e⟩
+  | bot => exact False.elim h
+  | and φ ψ ihφ ihψ =>
+    cases h with
+    | inl h' => have := ihφ h'; exact ⟨Or.inl this.1, this.2⟩
+    | inr h' => have := ihψ h'; exact ⟨Or.inr this.1, this.2⟩
+  | or φ ψ ihφ ihψ =>
+    cases h with
+    | inl h' => have := ihφ h'; exact ⟨Or.inl this.1, this.2⟩
+    | inr h' => have := ihψ h'; exact ⟨Or.inr this.1, this.2⟩
+  | imp φ ψ ihφ ihψ =>
+    cases h with
+    | inl h' => have := ihφ h'; exact ⟨Or.inl this.1, this.2⟩
+    | inr h' => have := ihψ h'; exact ⟨Or.inr this.1, this.2⟩
+  | all Y φ ih =>
+    by_cases e : Y = X
+    · rw [Fm2.sub, ite_eq_left e] at h
+      have h' : Y ≠ Z ∧ φ.fr Z := h
+      exact ⟨h', fun hz => h'.1 (e.trans hz.symm)⟩
+    · rw [Fm2.sub, ite_eq_right e] at h
+      have h' : Y ≠ Z ∧ (φ.sub X a).fr Z := h
+      have := ih h'.2
+      exact ⟨And.intro h'.1 this.1, this.2⟩
+
+theorem Fm2.closed_inst {X a : Nat} {φ : Fm2} (h : (Fm2.all X φ).closed) :
+    (φ.sub X a).closed := by
+  intro Z hZ
+  have h2 := Fm2.fr_sub φ hZ
+  exact h Z (And.intro (fun e => h2.2 e.symm) h2.1)
+
+-- ⟦·⟧: X ↦ var (X+1); var 0 queda para ∨ y ⊥
+def enc2 : Fm2 → F
+  | .atom a  => .atm a
+  | .pvar X  => .var (X + 1)
+  | .bot     => .all 0 (.var 0)
+  | .and φ ψ => .and (enc2 φ) (enc2 ψ)
+  | .or φ ψ  => .all 0 (orB (enc2 φ) (enc2 ψ))
+  | .imp φ ψ => .imp (enc2 φ) (enc2 ψ)
+  | .all X φ => .all (X + 1) (enc2 φ)
+
+theorem enc2_neutral : ∀ (φ : Fm2), (enc2 φ).neutral
+  | .atom _ => trivial
+  | .pvar _ => trivial
+  | .bot => trivial
+  | .and φ ψ => And.intro (enc2_neutral φ) (enc2_neutral ψ)
+  | .imp φ ψ => And.intro (enc2_neutral φ) (enc2_neutral ψ)
+  | .or φ ψ => And.intro (And.intro (And.intro (enc2_neutral φ) trivial)
+      (And.intro (enc2_neutral ψ) trivial)) trivial
+  | .all _ φ => enc2_neutral φ
+
+-- libres de ⟦φ⟧: X + 1 con X libre en φ
+theorem enc2_fr : ∀ (φ : Fm2) (Y : Nat), (enc2 φ).fr Y → ∃ X, Y = X + 1 ∧ φ.fr X
+  | .atom _, _, h => False.elim h
+  | .pvar X, _, h => ⟨X, Eq.symm h, rfl⟩
+  | .bot, _, h => False.elim (And.left h (And.right h))
+  | .and φ ψ, Y, h => Or.elim h
+      (fun h' => (enc2_fr φ Y h').elim (fun X k => ⟨X, k.1, Or.inl k.2⟩))
+      (fun h' => (enc2_fr ψ Y h').elim (fun X k => ⟨X, k.1, Or.inr k.2⟩))
+  | .imp φ ψ, Y, h => Or.elim h
+      (fun h' => (enc2_fr φ Y h').elim (fun X k => ⟨X, k.1, Or.inl k.2⟩))
+      (fun h' => (enc2_fr ψ Y h').elim (fun X k => ⟨X, k.1, Or.inr k.2⟩))
+  | .or φ ψ, Y, h =>
+    have h0 : (0 : Nat) ≠ Y := And.left h
+    Or.elim (And.right h)
+      (fun k => Or.elim k
+        (fun k₁ => Or.elim k₁
+          (fun h' => (enc2_fr φ Y h').elim (fun X q => ⟨X, q.1, Or.inl q.2⟩))
+          (fun e => absurd e h0))
+        (fun k₂ => Or.elim k₂
+          (fun h' => (enc2_fr ψ Y h').elim (fun X q => ⟨X, q.1, Or.inr q.2⟩))
+          (fun e => absurd e h0)))
+      (fun e => absurd e h0)
+  | .all X φ, Y, h => (enc2_fr φ Y (And.right h)).elim (fun Z k =>
+      ⟨Z, k.1, And.intro (fun e => And.left h (by rw [k.1, e])) k.2⟩)
+
+theorem enc2_closed {φ : Fm2} (hc : φ.closed) : (enc2 φ).closed := fun Y hY =>
+  (enc2_fr φ Y hY).elim (fun X k => hc X k.2)
+
+theorem enc2_nfr0 (φ : Fm2) : ¬ (enc2 φ).fr 0 := fun h =>
+  (enc2_fr φ 0 h).elim (fun _ k => absurd k.1 (by omega))
+
+theorem orB_sub (e₁ e₂ : F) {Y : Nat} (a : Nat) (hY : ¬ (0 = Y)) :
+    (orB e₁ e₂).sub Y a = orB (e₁.sub Y a) (e₂.sub Y a) := by
+  show F.imp (F.and (F.imp (e₁.sub Y a) (if 0 = Y then F.atm a else F.var 0))
+      (F.imp (e₂.sub Y a) (if 0 = Y then F.atm a else F.var 0)))
+      (if 0 = Y then F.atm a else F.var 0) = _
+  rw [ite_eq_right hY]
+
+-- ⟦φ[a/X]⟧ = ⟦φ⟧[a/X+1]
+theorem enc2_sub (X a : Nat) : ∀ (φ : Fm2), enc2 (φ.sub X a) = (enc2 φ).sub (X + 1) a
+  | .atom _ => rfl
+  | .pvar Y => by
+    show enc2 (if Y = X then Fm2.atom a else Fm2.pvar Y) =
+      (if Y + 1 = X + 1 then F.atm a else F.var (Y + 1))
+    by_cases e : Y = X
+    · have e1 : Y + 1 = X + 1 := by rw [e]
+      rw [ite_eq_left e, ite_eq_left e1]
+      rfl
+    · have e1 : ¬ (Y + 1 = X + 1) := by omega
+      rw [ite_eq_right e, ite_eq_right e1]
+      rfl
+  | .bot => by
+    have h0 : ¬ (0 = X + 1) := by omega
+    show F.all 0 (F.var 0) =
+      (if 0 = X + 1 then F.all 0 (F.var 0) else F.all 0 ((F.var 0).sub (X + 1) a))
+    rw [ite_eq_right h0]
+    show F.all 0 (F.var 0) = F.all 0 (if 0 = X + 1 then F.atm a else F.var 0)
+    rw [ite_eq_right h0]
+  | .and φ ψ => by
+    show F.and (enc2 (φ.sub X a)) (enc2 (ψ.sub X a)) =
+      F.and ((enc2 φ).sub (X + 1) a) ((enc2 ψ).sub (X + 1) a)
+    rw [enc2_sub X a φ, enc2_sub X a ψ]
+  | .imp φ ψ => by
+    show F.imp (enc2 (φ.sub X a)) (enc2 (ψ.sub X a)) =
+      F.imp ((enc2 φ).sub (X + 1) a) ((enc2 ψ).sub (X + 1) a)
+    rw [enc2_sub X a φ, enc2_sub X a ψ]
+  | .or φ ψ => by
+    have h0 : ¬ (0 = X + 1) := by omega
+    show F.all 0 (orB (enc2 (φ.sub X a)) (enc2 (ψ.sub X a))) =
+      (if 0 = X + 1 then F.all 0 (orB (enc2 φ) (enc2 ψ))
+        else F.all 0 ((orB (enc2 φ) (enc2 ψ)).sub (X + 1) a))
+    rw [ite_eq_right h0, orB_sub (enc2 φ) (enc2 ψ) a h0, enc2_sub X a φ, enc2_sub X a ψ]
+  | .all Y φ => by
+    show enc2 (if Y = X then Fm2.all Y φ else Fm2.all Y (φ.sub X a)) =
+      (if Y + 1 = X + 1 then F.all (Y + 1) (enc2 φ)
+        else F.all (Y + 1) ((enc2 φ).sub (X + 1) a))
+    by_cases e : Y = X
+    · have e1 : Y + 1 = X + 1 := by rw [e]
+      rw [ite_eq_left e, ite_eq_left e1]
+      rfl
+    · have e1 : ¬ (Y + 1 = X + 1) := by omega
+      rw [ite_eq_right e, ite_eq_right e1]
+      show F.all (Y + 1) (enc2 (φ.sub X a)) = F.all (Y + 1) ((enc2 φ).sub (X + 1) a)
+      rw [enc2_sub X a φ]
+
+theorem dsj2_neutral (φ ψ : Fm2) (a : Nat) : (dsj (enc2 φ) (enc2 ψ) a).neutral :=
+  And.intro (And.intro (enc2_neutral φ) trivial) (And.intro (enc2_neutral ψ) trivial)
+
+theorem dsj2_closed {φ ψ : Fm2} (hφ : φ.closed) (hψ : ψ.closed) (a : Nat) :
+    (dsj (enc2 φ) (enc2 ψ) a).closed :=
+  closed_and (closed_imp (enc2_closed hφ) (closed_atm a))
+    (closed_imp (enc2_closed hψ) (closed_atm a))
+
+-- ⊩ con combustible k; ∀X: todas las instancias atómicas
+def supp2 : Nat → List F → Fm2 → Prop
+  | 0, _, _            => False
+  | _ + 1, B, .atom a  => Der B (.atm a)
+  | _ + 1, _, .pvar _  => False
+  | _ + 1, B, .bot     => ∀ a, Der B (.atm a)
+  | k + 1, B, .and φ ψ => supp2 k B φ ∧ supp2 k B ψ
+  | k + 1, B, .imp φ ψ => ∀ C, Ext B C → supp2 k C φ → supp2 k C ψ
+  | k + 1, B, .or φ ψ  => ∀ C, Ext B C → ∀ a : Nat,
+      (∀ E, Ext C E → supp2 k E φ → Der E (.atm a)) →
+      (∀ E, Ext C E → supp2 k E ψ → Der E (.atm a)) → Der C (.atm a)
+  | k + 1, B, .all X φ => ∀ a, supp2 k B (φ.sub X a)
+
+abbrev Supp2 (B : List F) (φ : Fm2) : Prop := supp2 φ.sz B φ
+
+-- H19(b): Support is Search con ∀X
+theorem sis2 : ∀ k (φ : Fm2) (B : List F), φ.sz ≤ k → φ.closed →
+    (supp2 k B φ ↔ Der B (enc2 φ)) := by
+  intro k
+  induction k with
+  | zero => intro φ _ hk _; exact absurd hk (by have := Fm2.sz_pos φ; omega)
+  | succ k ih =>
+    intro φ B hk hc
+    cases φ with
+    | atom a => exact Iff.rfl
+    | pvar X => exact False.elim (hc X rfl)
+    | bot =>
+      constructor
+      · intro h
+        refine Der.gen (X := 0) (G := .var 0) (fresh_exists B (enc2 .bot)) ?_
+        rw [F.sub_var]
+        exact h _
+      · intro h a
+        have h' := Der.inv_all (X := 0) (G := .var 0) h a
+        rw [F.sub_var] at h'
+        exact h'
+    | and φ ψ =>
+      have h1 : φ.sz + ψ.sz + 1 ≤ k + 1 := hk
+      have hcφ : φ.closed := fun X h => hc X (Or.inl h)
+      have hcψ : ψ.closed := fun X h => hc X (Or.inr h)
+      constructor
+      · intro h
+        exact Der.and ((ih φ B (by omega) hcφ).mp (And.left h))
+          ((ih ψ B (by omega) hcψ).mp (And.right h))
+      · intro h
+        exact And.intro ((ih φ B (by omega) hcφ).mpr (Der.inv_and h).1)
+          ((ih ψ B (by omega) hcψ).mpr (Der.inv_and h).2)
+    | imp φ ψ =>
+      have h1 : φ.sz + ψ.sz + 1 ≤ k + 1 := hk
+      have hcφ : φ.closed := fun X h => hc X (Or.inl h)
+      have hcψ : ψ.closed := fun X h => hc X (Or.inr h)
+      constructor
+      · intro h
+        have d : Der (enc2 φ :: B) (enc2 φ) :=
+          identity (enc2_neutral φ) (enc2_closed hcφ) (Elab.mem mem0)
+        exact Der.aug ((ih ψ (enc2 φ :: B) (by omega) hcψ).mp
+          (h (enc2 φ :: B) (Ext.cons _ B) ((ih φ (enc2 φ :: B) (by omega) hcφ).mpr d)))
+      · intro h C hBC hφ
+        have d := cut (enc2_neutral φ) (enc2_closed hcφ) ((ih φ C (by omega) hcφ).mp hφ)
+          (Der.inv_imp h)
+        exact (ih ψ C (by omega) hcψ).mpr
+          (Der.mono d (fun D hD => (List.mem_append.mp hD).elim id (hBC D)))
+    | or φ ψ =>
+      have h1 : φ.sz + ψ.sz + 1 ≤ k + 1 := hk
+      have hcφ : φ.closed := fun X h => hc X (Or.inl h)
+      have hcψ : ψ.closed := fun X h => hc X (Or.inr h)
+      constructor
+      · intro h
+        refine Der.gen (X := 0) (G := orB (enc2 φ) (enc2 ψ))
+          (fresh_exists B (enc2 (.or φ ψ))) ?_
+        rw [orB_inst (enc2_nfr0 φ) (enc2_nfr0 ψ)]
+        apply Der.aug
+        refine h _ (Ext.cons _ B) _ ?_ ?_
+        · intro E hE hφ
+          exact Der.back (Elab.andL (Elab.mem (hE _ mem0))) ((ih φ E (by omega) hcφ).mp hφ)
+        · intro E hE hψ
+          exact Der.back (Elab.andR (Elab.mem (hE _ mem0))) ((ih ψ E (by omega) hcψ).mp hψ)
+      · intro h C hBC a k₁ k₂
+        have h' := Der.inv_all (X := 0) (G := orB (enc2 φ) (enc2 ψ)) (Der.mono h hBC) a
+        rw [orB_inst (enc2_nfr0 φ) (enc2_nfr0 ψ)] at h'
+        have d := Der.inv_imp h'
+        have d₁ : Der C (.imp (enc2 φ) (.atm a)) :=
+          Der.aug (k₁ (enc2 φ :: C) (Ext.cons _ C) ((ih φ (enc2 φ :: C) (by omega) hcφ).mpr
+            (identity (enc2_neutral φ) (enc2_closed hcφ) (Elab.mem mem0))))
+        have d₂ : Der C (.imp (enc2 ψ) (.atm a)) :=
+          Der.aug (k₂ (enc2 ψ :: C) (Ext.cons _ C) ((ih ψ (enc2 ψ :: C) (by omega) hcψ).mpr
+            (identity (enc2_neutral ψ) (enc2_closed hcψ) (Elab.mem mem0))))
+        have d' := cut (dsj2_neutral φ ψ a) (dsj2_closed hcφ hcψ a) (Der.and d₁ d₂) d
+        exact Der.mono d' (fun _ hD => (List.mem_append.mp hD).elim id id)
+    | all X φ =>
+      have h1 : φ.sz + 1 ≤ k + 1 := hk
+      have hinst : ∀ a, (φ.sub X a).sz ≤ k ∧ (φ.sub X a).closed := fun a =>
+        ⟨by rw [Fm2.sz_sub]; omega, Fm2.closed_inst hc⟩
+      constructor
+      · intro h
+        refine Der.gen (fresh_exists B (enc2 (.all X φ))) ?_
+        rw [← enc2_sub]
+        exact (ih _ B (hinst _).1 (hinst _).2).mp (h _)
+      · intro h a
+        have h' := Der.inv_all h a
+        rw [← enc2_sub] at h'
+        exact (ih _ B (hinst a).1 (hinst a).2).mpr h'
+
+-- validez: soporte en toda base
+abbrev Valid2 (φ : Fm2) : Prop := ∀ B, Supp2 B φ
+
+theorem valid2_iff {φ : Fm2} (hc : φ.closed) : Valid2 φ ↔ Der [] (enc2 φ) :=
+  ⟨fun h => (sis2 _ φ [] (Nat.le_refl _) hc).mp (h []),
+   fun h B => (sis2 _ φ B (Nat.le_refl _) hc).mpr (Der.mono h (fun _ hD => by cases hD))⟩
+
+-- H19(c): una cota κ ≤ f(|φ|) decidiría la validez de segundo orden
+theorem valid2_decides (f : Nat → Nat)
+    (hf : ∀ φ : Fm2, φ.closed → Valid2 φ → Op (f φ.sz) [] (enc2 φ))
+    {φ : Fm2} (hc : φ.closed) : Valid2 φ ↔ opB (f φ.sz) [] (enc2 φ) = true :=
+  ⟨fun h => (opB_iff _ _ _).mpr (hf φ hc h),
+   fun h => (valid2_iff hc).mpr ⟨_, (opB_iff _ _ _).mp h⟩⟩
+
+example : opB 3 [] (enc2 (.all 0 (.imp (.pvar 0) (.pvar 0)))) = true := rfl
+example : opB 3 [] (enc2 (.all 0 (.pvar 0))) = false := rfl
+
 end Clausal
